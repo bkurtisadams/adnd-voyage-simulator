@@ -7,6 +7,18 @@ import { CargoRegistry } from '../data/cargo.js';
 import { PortRegistry } from '../data/ports.js';
 import { ProficiencySystem } from './proficiency.js';
 
+/**
+ * Calculate transport fee for consignment cargo
+ * Rules: 40 gp per ton (2 loads) per 500 miles, minimum 100 gp
+ */
+function calculateTransportFee(loads, distanceMiles) {
+    const tons = loads / 2; // 2 loads = 1 ton
+    const segments = Math.ceil(distanceMiles / 500); // How many 500-mile segments
+    const fee = tons * 40 * segments;
+    
+    return Math.max(fee, 100); // Minimum 100 gp
+}
+
 export class CargoSelling {
 
     /**
@@ -129,22 +141,55 @@ export class CargoSelling {
         let crewDirectTradeEarnings = 0;
 
         if (tradeMode === "speculation") {
+            // SPECULATION MODE (Ship Owner)
+            // Rules: "A ship owner engages in speculation typically takes 50% of the profits, 
+            // with the remainder split in shares amongst the captain and crew."
+            
             const cargoGrossProfit = saleResult.totalSaleValue - currentPurchaseCost;
-            const guildCut = cargoGrossProfit > 0 ? Math.floor(cargoGrossProfit * 0.20) : 0;
-            crewDirectTradeEarnings = cargoGrossProfit > 0 ? Math.floor(cargoGrossProfit * 0.80) : 0;
-            totalSaleValueForOwner = saleResult.totalSaleValue - guildCut - crewDirectTradeEarnings;
-
+            
+            if (cargoGrossProfit > 0) {
+                // Owner gets 50% of profit, crew gets 50% of profit
+                const ownerProfitShare = Math.floor(cargoGrossProfit * 0.50);
+                crewDirectTradeEarnings = Math.floor(cargoGrossProfit * 0.50);
+                
+                // Owner receives: original investment + their share of profit
+                totalSaleValueForOwner = currentPurchaseCost + ownerProfitShare;
+            } else {
+                // Loss or break-even - owner gets sale value, crew gets nothing
+                crewDirectTradeEarnings = 0;
+                totalSaleValueForOwner = saleResult.totalSaleValue;
+            }
+            
             newTreasury += totalSaleValueForOwner;
             newCrewEarningsFromTrade += crewDirectTradeEarnings;
+            
         } else {
-            // Consignment
-            const commission = Math.floor(saleResult.totalSaleValue * (commissionRate / 100));
-            crewDirectTradeEarnings = commission;
-            totalSaleValueToConsignor = saleResult.totalSaleValue - commission;
+            // CONSIGNMENT MODE
+            // Rules: "The captain or guild representative sells the cargo for the best possible price, 
+            // with 10-40% of the sale to the ship's crew."
+            
+            // Crew gets their commission (10-40% of sale, based on commissionRate setting)
+            const crewCommission = Math.floor(saleResult.totalSaleValue * (commissionRate / 100));
+            crewDirectTradeEarnings = crewCommission;
+            
+            // Consignor gets the rest
+            totalSaleValueToConsignor = saleResult.totalSaleValue - crewCommission;
+            
+            // Calculate transport fee: 40 gp per ton (2 loads) per 500 miles
+            // Get the distance for this leg (passed in as distanceTraveled)
+            const transportFee = calculateTransportFee(currentLoads, distanceTraveled);
+            
+            // Owner receives second half of transport fee (first half was paid upfront)
+            const deliveryPayment = Math.floor(transportFee / 2);
+            totalSaleValueForOwner = deliveryPayment;
+            
+            voyageLogHtmlRef.value += `<p><strong>Transport Fee (delivery payment):</strong> ${deliveryPayment} gp (${transportFee} gp total for ${distanceTraveled} miles)</p>`;
+            
+            newTreasury += totalSaleValueForOwner;
             newCrewEarningsFromTrade += crewDirectTradeEarnings;
         }
 
-        // Deduct tax
+        // Deduct tax from owner's treasury
         if (finalTaxAmount > 0) {
             newTreasury -= finalTaxAmount;
         }

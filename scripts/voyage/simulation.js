@@ -729,9 +729,30 @@ export class VoyageSimulator {
         };
         
         const cargo = CargoRegistry.get("consumer");
+        
+        // Calculate transport fee for the route
+        // Sum all leg distances to get total journey distance
+        const totalRouteDistance = state.route.ports.reduce((total, port, index, ports) => {
+            if (index === 0) return 0;
+            const distance = PortRegistry.getDistance(ports[index - 1], port);
+            return total + (distance || 0);
+        }, 0);
+        
+        // Calculate transport fee: 40 gp per ton (2 loads) per 500 miles, min 100 gp
+        const tons = state.currentCargo.loads / 2;
+        const segments = Math.ceil(totalRouteDistance / 500);
+        const totalTransportFee = Math.max(tons * 40 * segments, 100);
+        
+        // Charge half upfront
+        const upfrontPayment = Math.floor(totalTransportFee / 2);
+        state.treasury += upfrontPayment;
+        state.revenueTotal += upfrontPayment;
+        
         state.voyageLogHtml.value += `<p><strong>Consignment Load:</strong> ${cargo.name} (${state.currentCargo.loads} loads). Commission: ${state.commissionRate}%</p>`;
+        state.voyageLogHtml.value += `<p><strong>Transport Fee (upfront payment):</strong> ${upfrontPayment} gp (${totalTransportFee} gp total for ${totalRouteDistance} miles, ${upfrontPayment} gp due on delivery)</p>`;
         
         portActivity.activities.push(`Loaded ${state.currentCargo.loads} loads of ${cargo.name} on consignment.`);
+        portActivity.activities.push(`Received upfront transport payment: ${upfrontPayment} gp`);
     }
 
     /**
