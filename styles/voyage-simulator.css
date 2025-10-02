@@ -1,0 +1,206 @@
+/**
+ * AD&D Voyage Simulator Styles
+ */
+
+/* ============================================================================
+   Chat Message Styling
+   ============================================================================ */
+
+.adnd-voyage-message {
+    border-left: 4px solid #0066cc;
+    background: linear-gradient(135deg, #e7f3ff 0%, #ffffff 100%);
+}
+
+.adnd-voyage-message .message-header {
+    background: #0066cc;
+    color: white;
+}
+
+.voyage-summary {
+    padding: 10px;
+}
+
+.voyage-summary .card-header {
+    background: #8b4513;
+    color: white;
+    padding: 10px;
+    border-radius: 5px 5px 0 0;
+    font-weight: bold;
+}
+
+.voyage-summary .card-content {
+    padding: 15px;
+    background: #f9f6f0;
+    border: 2px solid #8b4513;
+    border-top: none;
+}
+
+.voyage-summary .card-footer {
+    padding: 10px;
+    background: #f0ebe0;
+    border: 2px solid #8b4513;
+    border-top: none;
+    border-radius: 0 0 5px 5px;
+    font-style: italic;
+}
+
+/* ============================================================================
+   Voyage Setup Dialog
+   ============================================================================ */
+
+#voyage-setup-form .form-group {
+    margin-bottom: 12px;
+}
+
+#voyage-setup-form label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+#voyage-setup-form input[type="text"],
+#voyage-setup-form input[type="number"],
+#voyage-setup-form select {
+    width: 100%;
+    padding: 6px;
+    border: 1px solid #999;
+    border-radius: 3px;
+}
+
+#voyage-setup-form input[type="checkbox"] {
+    margin-right: 6px;
+}
+
+#voyage-setup-form fieldset {
+    border: 1px solid #999;
+    padding: 15px;
+    margin: 15px 0;
+    border-radius: 5px;
+}
+
+#voyage-setup-form legend {
+    font-weight: bold;
+    padding: 0 10px;
+}
+
+#voyage-setup-form .tabs {
+    margin-bottom: 15px;
+    border-bottom: 2px solid #999;
+    display: flex;
+}
+
+#voyage-setup-form .tabs .item {
+    padding: 8px 16px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    border-bottom: none;
+    margin-bottom: -2px;
+    background: #f0f0f0;
+    color: #666;
+    font-weight: bold;
+}
+
+#voyage-setup-form .tabs .item:hover {
+    background: #e0e0e0;
+}
+
+#voyage-setup-form .tabs .item.active {
+    background: white;
+    color: black;
+    border-color: #999;
+    border-bottom-color: white;
+}
+
+#voyage-setup-form .tab {
+    display: none;
+    padding: 15px 0;
+}
+
+#voyage-setup-form .tab.active {
+    display: block;
+}
+
+/* ============================================================================
+   Sidebar Buttons
+   ============================================================================ */
+
+.adnd-voyage-new-button {
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px;
+    background: #0066cc;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.adnd-voyage-new-button:hover {
+    background: #0052a3;
+}
+
+.adnd-voyage-character-button {
+    margin-left: 8px;
+    padding: 4px 8px;
+    background: #8b4513;
+    color: white;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.adnd-voyage-character-button:hover {
+    background: #654321;
+    text-decoration: none;
+}
+
+/* ============================================================================
+   Dialog Enhancements
+   ============================================================================ */
+
+.dialog-button {
+    padding: 8px 16px;
+    margin: 0 4px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.dialog-button[type="submit"] {
+    background: #28a745;
+    color: white;
+}
+
+.dialog-button[type="submit"]:hover {
+    background: #218838;
+}
+
+.dialog-button[data-button="cancel"] {
+    background: #6c757d;
+    color: white;
+}
+
+.dialog-button[data-button="cancel"]:hover {
+    background: #5a6268;
+}
+
+/* ============================================================================
+   Responsive Design
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    #voyage-setup-form .vessel-info {
+        grid-template-columns: 1fr;
+    }
+    
+    #voyage-setup-form .tabs {
+        flex-direction: column;
+    }
+    
+    #voyage-setup-form .tabs .item {
+        border: 1px solid #999;
+        margin-bottom: 4px;
+    }
+}

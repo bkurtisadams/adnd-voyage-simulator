@@ -1,0 +1,52 @@
+{
+    "ADND_VOYAGE": {
+        "Title": "AD&D Voyage Simulator",
+        
+        "Settings": {
+            "DefaultGold": {
+                "Name": "Default Starting Gold",
+                "Hint": "Default amount of starting gold for new voyages"
+            },
+            "TradeMode": {
+                "Name": "Default Trade Mode",
+                "Hint": "Default trading mode for cargo operations"
+            },
+            "CrewQuality": {
+                "Name": "Default Crew Quality",
+                "Hint": "Default quality level for ship crews"
+            },
+            "AutoRepair": {
+                "Name": "Auto-Repair Ships",
+                "Hint": "Automatically repair ships at every port (100 gp per hull point)"
+            },
+            "EnableRowing": {
+                "Name": "Enable Rowing",
+                "Hint": "Allow crew to row when wind is insufficient"
+            }
+        },
+        
+        "TradeMode": {
+            "Speculation": "Speculation",
+            "Consignment": "Consignment"
+        },
+        
+        "CrewQuality": {
+            "Landlubber": "Landlubber (-2)",
+            "Green": "Green (-2)",
+            "Average": "Average (-1)",
+            "Trained": "Trained (0)",
+            "Crack": "Crack (+1)",
+            "OldSalts": "Old Salts (+2)"
+        },
+        
+        "Controls": {
+            "OpenSimulator": "Open Voyage Simulator"
+        },
+        
+        "Dialog": {
+            "VoyageSetup": "Voyage Setup",
+            "StartVoyage": "Start Voyage",
+            "Cancel": "Cancel"
+        }
+    }
+}

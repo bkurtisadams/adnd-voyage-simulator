@@ -1,0 +1,37 @@
+<div class="tab" data-tab="captain">
+  <h2>Captain</h2>
+
+  <div class="form-group">
+    <label for="captainName">Name</label>
+    <input type="text" id="captainName" name="captainName" value="{{captain.name}}" />
+  </div>
+
+  <h3>Abilities</h3>
+  <div class="abilities-grid">
+    <label>STR <input type="number" id="str" value="{{saved.str}}" min="3" max="18" /></label>
+    <label>DEX <input type="number" id="dex" value="{{saved.dex}}" min="3" max="18" /></label>
+    <label>CON <input type="number" id="con" value="{{saved.con}}" min="3" max="18" /></label>
+    <label>INT <input type="number" id="int" value="{{saved.int}}" min="3" max="18" /></label>
+    <label>WIS <input type="number" id="wis" value="{{saved.wis}}" min="3" max="18" /></label>
+    <label>CHA <input type="number" id="cha" value="{{saved.cha}}" min="3" max="18" /></label>
+  </div>
+
+  <h3>Skills</h3>
+  <div class="skills-grid">
+    <label><input type="checkbox" id="skillBargaining" {{checked saved.skillBargaining}}> Bargaining</label>
+    <label><input type="checkbox" id="skillAppraisal" {{checked saved.skillAppraisal}}> Appraisal</label>
+    <label><input type="checkbox" id="skillTrade" {{checked saved.skillTrade}}> Trade</label>
+    <label><input type="checkbox" id="skillSmuggling" {{checked saved.skillSmuggling}}> Smuggling</label>
+    <label><input type="checkbox" id="skillCustomsInspection" {{checked saved.skillCustomsInspection}}> Customs Inspection</label>
+    <label><input type="checkbox" id="skillSeamanship" {{checked saved.skillSeamanship}}> Seamanship</label>
+    <label><input type="checkbox" id="skillShipCarpentry" {{checked saved.skillShipCarpentry}}> Ship Carpentry</label>
+    <label><input type="checkbox" id="skillNavigation" {{checked saved.skillNavigation}}> Navigation</label>
+    <label><input type="checkbox" id="skillPiloting" {{checked saved.skillPiloting}}> Piloting</label>
+    <label><input type="checkbox" id="skillSeaLore" {{checked saved.skillSeaLore}}> Sea Lore</label>
+    <label><input type="checkbox" id="skillShipRowing" {{checked saved.skillShipRowing}}> Ship Rowing</label>
+    <label><input type="checkbox" id="skillShipSailing" {{checked saved.skillShipSailing}}> Ship Sailing</label>
+    <label><input type="checkbox" id="skillShipwright" {{checked saved.skillShipwright}}> Shipwright</label>
+    <label><input type="checkbox" id="skillSignaling" {{checked saved.skillSignaling}}> Signaling</label>
+    <label><input type="checkbox" id="skillVesselIdentification" {{checked saved.skillVesselIdentification}}> Vessel Identification</label>
+  </div>
+</div>
