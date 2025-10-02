@@ -504,6 +504,8 @@ export class ReportGenerator {
      * Helper methods
      */
     static parseWeatherDate(dateStr) {
+        if (!dateStr) return "Date Unknown";
+        
         const match = dateStr.match(/^(\w+)\s+(\d+),\s+CY\s+(\d+)$/);
         return match ? `${match[2]} ${match[1]} ${match[3]}` : dateStr;
     }

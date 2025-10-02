@@ -43,20 +43,37 @@ export class CargoSelling {
         await cDelayRoll.evaluate();
         voyageLogHtmlRef.value += `<p><strong>Customs Delay:</strong> ${cDelayRoll.total} hours.</p>`;
 
-        // Smuggling attempt check
+        // Check if smuggling proficiency exists
         let attemptSmuggling = false;
         let finalTaxAmount = 0;
         let finalTaxPercent = 0;
         let finalSmugglingNote = "";
 
-        if (captainProficiencyScores.smuggling !== null) {
-            attemptSmuggling = automateTrading ? true : await this.offerSmugglingChoice(portName, captainProficiencyScores);
-        }
-
+        // Roll for base tax rate first
         const taxRoll = new Roll("2d10");
         await taxRoll.evaluate();
-        finalTaxPercent = Math.clamped(taxRoll.total, 1, 100);
+        const baseTaxPercent = Math.clamp(taxRoll.total, 1, 100);
 
+        // Calculate estimated tax for decision-making
+        const baseCargoValue = CargoRegistry.get(currentCargoType).baseValue * currentLoads;
+        const estimatedTax = Math.floor(baseCargoValue * (baseTaxPercent / 100));
+
+        // Decide whether to attempt smuggling
+        if (captainProficiencyScores.smuggling !== null && captainProficiencyScores.smuggling > 0) {
+            if (automateTrading) {
+                // Auto-decide: only smuggle if high proficiency AND high tax
+                attemptSmuggling = (captainProficiencyScores.smuggling >= 12 && estimatedTax > 500);
+                
+                if (attemptSmuggling) {
+                    voyageLogHtmlRef.value += `<p><em>Captain decides to attempt smuggling (tax would be: ${estimatedTax} gp, proficiency: ${captainProficiencyScores.smuggling})</em></p>`;
+                }
+            } else {
+                // Manual mode - ask player
+                attemptSmuggling = await this.offerSmugglingChoice(portName, captainProficiencyScores);
+            }
+        }
+
+        // Process smuggling or normal customs
         if (attemptSmuggling) {
             const smugglingCheck = await ProficiencySystem.makeProficiencyCheck(
                 "smuggling",
@@ -72,11 +89,11 @@ export class CargoSelling {
                 finalSmugglingNote = "Successfully avoided customs inspection";
                 voyageLogHtmlRef.value += `<p><strong>Smuggling SUCCESS:</strong> No customs fees!</p>`;
             } else {
-                const baseCargoValue = CargoRegistry.get(currentCargoType).baseValue * currentLoads;
-                finalTaxAmount = Math.floor(baseCargoValue * (finalTaxPercent / 100)) * 10;
-                finalTaxPercent = finalTaxPercent * 10;
+                // Failed smuggling = 10x penalty
+                finalTaxAmount = estimatedTax * 10;
+                finalTaxPercent = baseTaxPercent * 10;
                 finalSmugglingNote = `Smuggling failed - ${finalTaxPercent}% fine`;
-                voyageLogHtmlRef.value += `<p><strong>Smuggling FAILED:</strong> ${finalTaxPercent}% fine!</p>`;
+                voyageLogHtmlRef.value += `<p><strong>Smuggling FAILED:</strong> ${finalTaxPercent}% fine (${finalTaxAmount} gp)!</p>`;
             }
         } else {
             // Normal customs processing with appraisal
@@ -88,6 +105,7 @@ export class CargoSelling {
                 crewQualityMod,
                 voyageLogHtmlRef
             );
+            finalTaxPercent = baseTaxPercent;
             finalTaxAmount = Math.floor(cargoValue * (finalTaxPercent / 100));
             voyageLogHtmlRef.value += `<p><strong>Customs Tax:</strong> ${finalTaxPercent}% of ${cargoValue} gp = ${finalTaxAmount} gp.</p>`;
         }
@@ -200,16 +218,16 @@ export class CargoSelling {
         if (profScores.bargaining !== null) {
             const check = await ProficiencySystem.makeProficiencyCheck("bargaining", profScores, ltSkills, crewQualityMod, 0);
             const margin = check.success ? 
-                Math.clamped(check.needed - check.roll, 0, 5) : 
-                -Math.clamped(check.roll - check.needed, 0, 5);
+                Math.clamp(check.needed - check.roll, 0, 5) : 
+                -Math.clamp(check.roll - check.needed, 0, 5);
             sellBargAdj = margin;
         }
 
         if (profScores.appraisal !== null) {
             const check = await ProficiencySystem.makeProficiencyCheck("appraisal", profScores, ltSkills, crewQualityMod, 0);
             const margin = check.success ? 
-                Math.clamped(check.needed - check.roll, 0, 5) : 
-                -Math.clamped(check.roll - check.needed, 0, 5);
+                Math.clamp(check.needed - check.roll, 0, 5) : 
+                -Math.clamp(check.roll - check.needed, 0, 5);
             sellAppAdj = margin;
         }
 

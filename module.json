@@ -10,7 +10,7 @@
   },
   "authors": [
     {
-      "name": "Your Name",
+      "name": "BK Adams",
       "discord": "yourname#0000"
     }
   ],
@@ -30,7 +30,7 @@
   "relationships": {
     "recommends": [
       {
-        "id": "dnd-weather",
+        "id": "adnd-weather",
         "type": "module",
         "compatibility": {
           "verified": "1.0.0"

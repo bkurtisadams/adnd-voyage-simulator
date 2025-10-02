@@ -9,14 +9,14 @@ export class WeatherSystem {
      * Generate weather for a sailing day
      */
     static async generateDayWeather() {
-        if (!game.dndWeather?.weatherSystem) {
-            console.warn("DnD Weather module not found - using fallback weather");
+        if (!globalThis.dndWeather?.weatherSystem) {
+            console.warn("ADnD Weather module not found - using fallback weather");
             return this.getFallbackWeather();
         }
 
-        const weatherArr = await game.dndWeather.weatherSystem.generateWeather();
+        const weatherArr = await globalThis.dndWeather.weatherSystem.generateWeather();
         const weatherObj = weatherArr[0];
-        game.dndWeather.weatherSystem.currentWeather = weatherObj;
+        globalThis.dndWeather.weatherSystem.currentWeather = weatherObj;
 
         return this.parseWeatherObject(weatherObj);
     }

@@ -186,6 +186,13 @@
     background: #5a6268;
 }
 
+.adnd-voyage-simulator .abilities-grid,
+.adnd-voyage-simulator .skills-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem 1rem;
+}
+
 /* ============================================================================
    Responsive Design
    ============================================================================ */

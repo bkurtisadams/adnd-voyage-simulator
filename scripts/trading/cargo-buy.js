@@ -89,7 +89,7 @@ export class CargoPurchasing {
             }
         }
 
-        finalBaseTypeRoll = Math.clamped(finalBaseTypeRoll + appraisalAdjust, 3, 20);
+        finalBaseTypeRoll = Math.clamp(finalBaseTypeRoll + appraisalAdjust, 3, 20);
 
         const determinedCargoKey = CargoRegistry.determineTypeFromRoll(finalBaseTypeRoll);
         const determinedCargo = CargoRegistry.get(determinedCargoKey);
@@ -113,11 +113,11 @@ export class CargoPurchasing {
             );
 
             if (bargainCheck.success) {
-                const successMargin = Math.clamped(bargainCheck.needed - bargainCheck.roll, 0, 5);
+                const successMargin = Math.clamp(bargainCheck.needed - bargainCheck.roll, 0, 5);
                 bargainAdjustPercent = -(successMargin * 5);
                 voyageLogHtmlRef.value += `<p><strong>Bargaining (Buy):</strong> SUCCESS (margin: ${successMargin}) → ${Math.abs(bargainAdjustPercent)}% discount.</p>`;
             } else {
-                const failureMargin = Math.clamped(bargainCheck.roll - bargainCheck.needed, 0, 5);
+                const failureMargin = Math.clamp(bargainCheck.roll - bargainCheck.needed, 0, 5);
                 bargainAdjustPercent = (failureMargin * 5);
                 voyageLogHtmlRef.value += `<p><strong>Bargaining (Buy):</strong> FAILED (margin: ${failureMargin}) → +${bargainAdjustPercent}% penalty.</p>`;
             }
@@ -168,7 +168,7 @@ export class CargoPurchasing {
                             label: "Buy Cargo",
                             callback: (html) => {
                                 let numLoads = parseInt(html.find("#loadsToBuy").val()) || 0;
-                                numLoads = Math.clamped(numLoads, 0, maxPurchasable);
+                                numLoads = Math.clamp(numLoads, 0, maxPurchasable);
                                 const cost = numLoads * purchasePricePerLoad;
                                 
                                 if (cost > treasury) {

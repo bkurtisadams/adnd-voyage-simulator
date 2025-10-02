@@ -151,12 +151,11 @@ class ADnDVoyageSimulator {
     static ready() {
         console.log(`${this.TITLE} | Ready`);
         
-        // Check for DnD Weather dependency
-        if (!game.modules.get('dnd-weather')?.active) {
-            console.warn(`${this.TITLE} | DnD Weather module not active - weather features will be limited`);
+        // Check for ADND Weather dependency
+        if (!globalThis.dndWeather?.weatherSystem) {
+            console.warn(`${this.TITLE} | ADND Weather module not active - weather features will be limited`);
         }
 
-        // Add button to scene controls if user has permissions
         if (game.user.isGM) {
             this.addSceneControl();
         }
