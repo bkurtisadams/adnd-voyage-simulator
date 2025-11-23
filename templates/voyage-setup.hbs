@@ -1,195 +1,205 @@
 <form id="voyage-setup-form">
-    <div class="tabs" data-group="voyageSetupTabs">
-        <a class="item active" data-tab="voyage-details">Voyage Details</a>
-        <a class="item" data-tab="captain-info">Captain</a>
-        <a class="item" data-tab="lieutenant-info">Lieutenant</a>
-    </div>
+  <nav class="tabs" data-group="voyageSetupTabs">
+    <a class="item active" data-tab="voyage-details">Voyage Details</a>
+    <a class="item" data-tab="captain-info">Captain</a>
+    <a class="item" data-tab="lieutenant-info">Lieutenant</a>
+  </nav>
 
-    <div class="tab-content">
-        <!-- Voyage Details Tab -->
-        <div class="tab active" data-tab="voyage-details">
-            <div class="form-group">
-                <label for="shipID">Select Ship:</label>
-                <select id="shipID" name="shipID" required>
-                    <option value="">-- Choose Ship --</option>
-                    {{#each ships}}
-                    <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>
-                    {{/each}}
-                </select>
-            </div>
+  <section class="tab-content">
+    <!-- ============ VOYAGE DETAILS ============ -->
+    <section class="tab active" data-tab="voyage-details">
+      <div class="form-group">
+        <label for="shipID">Select Ship:</label>
+        <select id="shipID" name="shipID" required>
+          <option value="">-- Choose Ship --</option>
+          {{#each ships}}
+            <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>
+          {{/each}}
+        </select>
+      </div>
 
-            <div class="form-group">
-                <label for="routeID">Select Trade Route:</label>
-                <select id="routeID" name="routeID" required>
-                    <option value="">-- Choose Route --</option>
-                    {{#each routes}}
-                    <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>
-                    {{/each}}
-                </select>
-            </div>
+      <div class="form-group">
+        <label for="routeID">Select Trade Route:</label>
+        <select id="routeID" name="routeID" required>
+          <option value="">-- Choose Route --</option>
+          {{#each routes}}
+            <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>
+          {{/each}}
+        </select>
+      </div>
 
-            <div class="form-group">
-                <label for="startingGold">Starting Gold (gp):</label>
-                <input type="number" id="startingGold" name="startingGold" value="{{saved.startingGold}}" min="0" required/>
-            </div>
+      <div class="form-group">
+        <label for="startingGold">Starting Gold (gp):</label>
+        <input type="number" id="startingGold" name="startingGold" value="{{saved.startingGold}}" min="0" required />
+      </div>
 
-            <hr />
+      <hr/>
 
-            <div class="form-group">
-                <label>
-                    <input type="checkbox" id="automateTrading" name="automateTrading" {{#if saved.automateTrading}}checked{{/if}} />
-                    Automate Cargo Trading
-                </label>
-            </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="automateTrading" name="automateTrading" {{#if saved.automateTrading}}checked{{/if}} />
+          Automate Cargo Trading
+        </label>
+      </div>
 
-            <div class="form-group" id="manualTradeModeGroup" style="display: {{#if saved.automateTrading}}none{{else}}block{{/if}};">
-                <label>Trade Mode:</label><br/>
-                <label><input type="radio" name="tradeMode" value="speculation" {{#if (eq saved.tradeMode "speculation")}}checked{{/if}}/> Speculation</label><br/>
-                <label><input type="radio" name="tradeMode" value="consignment" {{#if (eq saved.tradeMode "consignment")}}checked{{/if}}/> Consignment</label>
-            </div>
+      <!-- Only visible when NOT automating trading -->
+      <div class="form-group" id="manualTradeModeGroup"
+           style="display: {{#if saved.automateTrading}}none{{else}}block{{/if}};">
+        <label>Trade Mode:</label><br/>
+        <label>
+          <input type="radio" name="tradeMode" value="speculation" {{#if (eq saved.tradeMode "speculation")}}checked{{/if}} />
+          Speculation
+        </label><br/>
+        <label>
+          <input type="radio" name="tradeMode" value="consignment" {{#if (eq saved.tradeMode "consignment")}}checked{{/if}} />
+          Consignment
+        </label>
+      </div>
 
-            <div class="form-group" id="commissionRateGroup" style="display: {{#if (and (eq saved.tradeMode "consignment") (not saved.automateTrading))}}block{{else}}none{{/if}};">
-                <label for="commissionRate">Commission Rate (%):</label>
-                <input type="number" id="commissionRate" name="commissionRate" value="{{saved.commissionRate}}" min="10" max="40"/>
-            </div>
+      <!-- Show commission% only if NOT automating AND tradeMode == consignment -->
+      <div class="form-group" id="commissionRateGroup"
+           style="display:
+             {{#if saved.automateTrading}}
+               none
+             {{else}}
+               {{#if (eq saved.tradeMode "consignment")}}block{{else}}none{{/if}}
+             {{/if}};">
+        <label for="commissionRate">Commission Rate (%):</label>
+        <input type="number" id="commissionRate" name="commissionRate" value="{{saved.commissionRate}}" min="10" max="40" />
+      </div>
 
-            <hr />
+      <hr/>
 
-            <div class="form-group">
-                <label for="crewQuality">Crew Quality:</label>
-                <select id="crewQuality" name="crewQuality">
-                    {{#each crewQualities}}
-                    <option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>
-                    {{/each}}
-                </select>
-            </div>
+      <div class="form-group">
+        <label for="crewQuality">Crew Quality:</label>
+        <select id="crewQuality" name="crewQuality">
+          <option value="Green"     {{selected saved.crewQuality "Green"}}>Green</option>
+          <option value="Average"   {{selected saved.crewQuality "Average"}}>Average</option>
+          <option value="Good"      {{selected saved.crewQuality "Good"}}>Good</option>
+          <option value="Veteran"   {{selected saved.crewQuality "Veteran"}}>Veteran</option>
+          <option value="Elite"     {{selected saved.crewQuality "Elite"}}>Elite</option>
+        </select>
+      </div>
 
-            <div class="form-group">
-                <label for="latitude">Latitude (°N):</label>
-                <input type="number" id="latitude" name="latitude" value="{{saved.latitude}}" step="0.1" required/>
-            </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="enableRowing" name="enableRowing" {{#if saved.enableRowing}}checked{{/if}} />
+          Enable Rowing (if applicable)
+        </label>
+      </div>
 
-            <div class="form-group">
-                <label for="longitude">Longitude (°E):</label>
-                <input type="number" id="longitude" name="longitude" value="{{saved.longitude}}" step="0.1" required/>
-            </div>
+      <div class="form-group">
+        <label for="latitude">Latitude (°N):</label>
+        <input type="number" id="latitude" name="latitude" value="{{saved.latitude}}" step="0.1" required/>
+      </div>
 
-            <div class="form-group">
-                <label for="startingYear">Starting Year (CY):</label>
-                <input type="number" id="startingYear" name="startingYear" value="{{saved.startingYear}}" min="1" required/>
-            </div>
+      <div class="form-group">
+        <label for="longitude">Longitude (°E):</label>
+        <input type="number" id="longitude" name="longitude" value="{{saved.longitude}}" step="0.1" required/>
+      </div>
 
-            <div class="form-group">
-                <label for="startingMonth">Starting Month:</label>
-                <select id="startingMonth" name="startingMonth" required>
-                    <option value="">-- Choose Month --</option>
-                    {{#each months}}
-                    <option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.value}}</option>
-                    {{/each}}
-                </select>
-            </div>
+      <div class="form-group">
+        <label for="startingYear">Starting Year (CY):</label>
+        <input type="number" id="startingYear" name="startingYear" value="{{saved.startingYear}}" min="1" required/>
+      </div>
 
-            <div class="form-group">
-                <label for="startingDay">Starting Day:</label>
-                <input type="number" id="startingDay" name="startingDay" value="{{saved.startingDay}}" min="1" max="28" required/>
-            </div>
+      <div class="form-group">
+        <label for="startingMonth">Starting Month:</label>
+        <select id="startingMonth" name="startingMonth" required>
+          <option value="">-- Choose Month --</option>
+          {{#each months}}
+            <option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.value}}</option>
+          {{/each}}
+        </select>
+      </div>
 
-            <div class="form-group">
-                <label>
-                    <input type="checkbox" id="autoRepair" name="autoRepair" {{#if saved.autoRepair}}checked{{/if}} />
-                    Auto-repair at ports
-                </label>
-            </div>
+      <div class="form-group">
+        <label for="startingDay">Starting Day:</label>
+        <input type="number" id="startingDay" name="startingDay" value="{{saved.startingDay}}" min="1" max="28" required/>
+      </div>
+    </section>
 
-            <div class="form-group">
-                <label>
-                    <input type="checkbox" id="enableRowing" name="enableRowing" {{#if saved.enableRowing}}checked{{/if}} />
-                    Enable Rowing
-                </label>
-            </div>
-        </div>
+    <!-- ============ CAPTAIN ============ -->
+    <section class="tab" data-tab="captain-info">
+      <h2>Captain</h2>
 
-        <!-- Captain Tab - Similar structure with captain fields -->
-        <div class="tab" data-tab="captain-info">
-        <h2>Captain</h2>
+      <div class="form-group">
+        <label for="captainName">Name</label>
+        <input type="text" id="captainName" name="captainName" value="{{captain.name}}" />
+      </div>
 
-        <div class="form-group">
-            <label for="captainName">Name</label>
-            <input type="text" id="captainName" name="captainName" value="{{captain.name}}" />
-        </div>
+      <h3>Abilities</h3>
+      <div class="abilities-grid">
+        <label>STR <input type="number" id="str" name="str" value="{{saved.str}}" min="3" max="18" /></label>
+        <label>DEX <input type="number" id="dex" name="dex" value="{{saved.dex}}" min="3" max="18" /></label>
+        <label>CON <input type="number" id="con" name="con" value="{{saved.con}}" min="3" max="18" /></label>
+        <label>INT <input type="number" id="int" name="int" value="{{saved.int}}" min="3" max="18" /></label>
+        <label>WIS <input type="number" id="wis" name="wis" value="{{saved.wis}}" min="3" max="18" /></label>
+        <label>CHA <input type="number" id="cha" name="cha" value="{{saved.cha}}" min="3" max="18" /></label>
+      </div>
 
-        <h3>Abilities</h3>
-        <div class="abilities-grid">
-            <label>STR <input type="number" id="str" value="{{saved.str}}" min="3" max="18" /></label>
-            <label>DEX <input type="number" id="dex" value="{{saved.dex}}" min="3" max="18" /></label>
-            <label>CON <input type="number" id="con" value="{{saved.con}}" min="3" max="18" /></label>
-            <label>INT <input type="number" id="int" value="{{saved.int}}" min="3" max="18" /></label>
-            <label>WIS <input type="number" id="wis" value="{{saved.wis}}" min="3" max="18" /></label>
-            <label>CHA <input type="number" id="cha" value="{{saved.cha}}" min="3" max="18" /></label>
-        </div>
+      <h3>Skills</h3>
+      <div class="skills-grid">
+        <label><input type="checkbox" id="skillBargaining"          name="skillBargaining"          {{checked saved.skillBargaining}}>          Bargaining</label>
+        <label><input type="checkbox" id="skillAppraisal"           name="skillAppraisal"           {{checked saved.skillAppraisal}}>           Appraisal</label>
+        <label><input type="checkbox" id="skillTrade"               name="skillTrade"               {{checked saved.skillTrade}}>               Trade</label>
+        <label><input type="checkbox" id="skillSmuggling"           name="skillSmuggling"           {{checked saved.skillSmuggling}}>           Smuggling</label>
+        <label><input type="checkbox" id="skillCustomsInspection"   name="skillCustomsInspection"   {{checked saved.skillCustomsInspection}}>   Customs Inspection</label>
+        <label><input type="checkbox" id="skillSeamanship"          name="skillSeamanship"          {{checked saved.skillSeamanship}}>          Seamanship</label>
+        <label><input type="checkbox" id="skillShipCarpentry"       name="skillShipCarpentry"       {{checked saved.skillShipCarpentry}}>       Ship Carpentry</label>
+        <label><input type="checkbox" id="skillNavigation"          name="skillNavigation"          {{checked saved.skillNavigation}}>          Navigation</label>
+        <label><input type="checkbox" id="skillPiloting"            name="skillPiloting"            {{checked saved.skillPiloting}}>            Piloting</label>
+        <label><input type="checkbox" id="skillSeaLore"             name="skillSeaLore"             {{checked saved.skillSeaLore}}>             Sea Lore</label>
+        <label><input type="checkbox" id="skillShipRowing"          name="skillShipRowing"          {{checked saved.skillShipRowing}}>          Ship Rowing</label>
+        <label><input type="checkbox" id="skillShipSailing"         name="skillShipSailing"         {{checked saved.skillShipSailing}}>         Ship Sailing</label>
+        <label><input type="checkbox" id="skillShipwright"          name="skillShipwright"          {{checked saved.skillShipwright}}>          Shipwright</label>
+        <label><input type="checkbox" id="skillSignaling"           name="skillSignaling"           {{checked saved.skillSignaling}}>           Signaling</label>
+        <label><input type="checkbox" id="skillVesselIdentification" name="skillVesselIdentification" {{checked saved.skillVesselIdentification}}> Vessel Identification</label>
+      </div>
+    </section>
 
-        <h3>Skills</h3>
-        <div class="skills-grid">
-            <label><input type="checkbox" id="skillBargaining"         {{checked saved.skillBargaining}}>         Bargaining</label>
-            <label><input type="checkbox" id="skillAppraisal"          {{checked saved.skillAppraisal}}>          Appraisal</label>
-            <label><input type="checkbox" id="skillTrade"              {{checked saved.skillTrade}}>              Trade</label>
-            <label><input type="checkbox" id="skillSmuggling"          {{checked saved.skillSmuggling}}>          Smuggling</label>
-            <label><input type="checkbox" id="skillCustomsInspection"  {{checked saved.skillCustomsInspection}}>  Customs Inspection</label>
-            <label><input type="checkbox" id="skillSeamanship"         {{checked saved.skillSeamanship}}>         Seamanship</label>
-            <label><input type="checkbox" id="skillShipCarpentry"      {{checked saved.skillShipCarpentry}}>      Ship Carpentry</label>
-            <label><input type="checkbox" id="skillNavigation"         {{checked saved.skillNavigation}}>         Navigation</label>
-            <label><input type="checkbox" id="skillPiloting"           {{checked saved.skillPiloting}}>           Piloting</label>
-            <label><input type="checkbox" id="skillSeaLore"            {{checked saved.skillSeaLore}}>            Sea Lore</label>
-            <label><input type="checkbox" id="skillShipRowing"         {{checked saved.skillShipRowing}}>         Ship Rowing</label>
-            <label><input type="checkbox" id="skillShipSailing"        {{checked saved.skillShipSailing}}>        Ship Sailing</label>
-            <label><input type="checkbox" id="skillShipwright"         {{checked saved.skillShipwright}}>         Shipwright</label>
-            <label><input type="checkbox" id="skillSignaling"          {{checked saved.skillSignaling}}>          Signaling</label>
-            <label><input type="checkbox" id="skillVesselIdentification" {{checked saved.skillVesselIdentification}}> Vessel Identification</label>
-        </div>
-        </div>
+    <!-- ============ LIEUTENANT ============ -->
+    <section class="tab" data-tab="lieutenant-info">
+      <h2>Lieutenant</h2>
 
-        <!-- Lieutenant Tab -->
-        <div class="tab" data-tab="lieutenant-info">
-        <h2>Lieutenant</h2>
+      <div class="form-group">
+        <label for="lieutenantName">Name</label>
+        <input type="text" id="lieutenantName" name="lieutenantName" value="{{lieutenant.name}}" />
+      </div>
 
-        <div class="form-group">
-            <label for="lieutenantName">Name</label>
-            <input type="text" id="lieutenantName" name="lieutenantName" value="{{lieutenant.name}}" />
-        </div>
+      <h3>Abilities</h3>
+      <div class="abilities-grid">
+        <label>STR <input type="number" id="ltStr" name="ltStr" value="{{saved.ltStr}}" min="3" max="18" /></label>
+        <label>DEX <input type="number" id="ltDex" name="ltDex" value="{{saved.ltDex}}" min="3" max="18" /></label>
+        <label>CON <input type="number" id="ltCon" name="ltCon" value="{{saved.ltCon}}" min="3" max="18" /></label>
+        <label>INT <input type="number" id="ltInt" name="ltInt" value="{{saved.ltInt}}" min="3" max="18" /></label>
+        <label>WIS <input type="number" id="ltWis" name="ltWis" value="{{saved.ltWis}}" min="3" max="18" /></label>
+        <label>CHA <input type="number" id="ltCha" name="ltCha" value="{{saved.ltCha}}" min="3" max="18" /></label>
+      </div>
 
-        <h3>Abilities</h3>
-        <div class="abilities-grid">
-            <label>STR <input type="number" id="ltStr" value="{{saved.ltStr}}" min="3" max="18" /></label>
-            <label>DEX <input type="number" id="ltDex" value="{{saved.ltDex}}" min="3" max="18" /></label>
-            <label>CON <input type="number" id="ltCon" value="{{saved.ltCon}}" min="3" max="18" /></label>
-            <label>INT <input type="number" id="ltInt" value="{{saved.ltInt}}" min="3" max="18" /></label>
-            <label>WIS <input type="number" id="ltWis" value="{{saved.ltWis}}" min="3" max="18" /></label>
-            <label>CHA <input type="number" id="ltCha" value="{{saved.ltCha}}" min="3" max="18" /></label>
-        </div>
+      <h3>Skills</h3>
+      <div class="skills-grid">
+        <label><input type="checkbox" id="ltSkillBargaining"          name="ltSkillBargaining"          {{checked saved.ltSkillBargaining}}>          Bargaining</label>
+        <label><input type="checkbox" id="ltSkillAppraisal"           name="ltSkillAppraisal"           {{checked saved.ltSkillAppraisal}}>           Appraisal</label>
+        <label><input type="checkbox" id="ltSkillTrade"               name="ltSkillTrade"               {{checked saved.ltSkillTrade}}>               Trade</label>
+        <label><input type="checkbox" id="ltSkillSmuggling"           name="ltSkillSmuggling"           {{checked saved.ltSkillSmuggling}}>           Smuggling</label>
+        <label><input type="checkbox" id="ltSkillCustomsInspection"   name="ltSkillCustomsInspection"   {{checked saved.ltSkillCustomsInspection}}>   Customs Inspection</label>
+        <label><input type="checkbox" id="ltSkillSeamanship"          name="ltSkillSeamanship"          {{checked saved.ltSkillSeamanship}}>          Seamanship</label>
+        <label><input type="checkbox" id="ltSkillShipCarpentry"       name="ltSkillShipCarpentry"       {{checked saved.ltSkillShipCarpentry}}>       Ship Carpentry</label>
+        <label><input type="checkbox" id="ltSkillNavigation"          name="ltSkillNavigation"          {{checked saved.ltSkillNavigation}}>          Navigation</label>
+        <label><input type="checkbox" id="ltSkillPiloting"            name="ltSkillPiloting"            {{checked saved.ltSkillPiloting}}>            Piloting</label>
+        <label><input type="checkbox" id="ltSkillSeaLore"             name="ltSkillSeaLore"             {{checked saved.ltSkillSeaLore}}>             Sea Lore</label>
+        <label><input type="checkbox" id="ltSkillShipRowing"          name="ltSkillShipRowing"          {{checked saved.ltSkillShipRowing}}>          Ship Rowing</label>
+        <label><input type="checkbox" id="ltSkillSailing"             name="ltSkillSailing"             {{checked saved.ltSkillSailing}}>             Ship Sailing</label>
+        <label><input type="checkbox" id="ltSkillShipwright"          name="ltSkillShipwright"          {{checked saved.ltSkillShipwright}}>          Shipwright</label>
+        <label><input type="checkbox" id="ltSkillSignaling"           name="ltSkillSignaling"           {{checked saved.ltSkillSignaling}}>           Signaling</label>
+        <label><input type="checkbox" id="ltSkillVesselIdentification" name="ltSkillVesselIdentification" {{checked saved.ltSkillVesselIdentification}}> Vessel Identification</label>
+      </div>
+    </section>
+  </section>
 
-        <h3>Skills</h3>
-        <div class="skills-grid">
-            <label><input type="checkbox" id="ltSkillBargaining"         {{checked saved.ltSkillBargaining}}>         Bargaining</label>
-            <label><input type="checkbox" id="ltSkillAppraisal"          {{checked saved.ltSkillAppraisal}}>          Appraisal</label>
-            <label><input type="checkbox" id="ltSkillTrade"              {{checked saved.ltSkillTrade}}>              Trade</label>
-            <label><input type="checkbox" id="ltSkillSmuggling"          {{checked saved.ltSkillSmuggling}}>          Smuggling</label>
-            <label><input type="checkbox" id="ltSkillCustomsInspection"  {{checked saved.ltSkillCustomsInspection}}>  Customs Inspection</label>
-            <label><input type="checkbox" id="ltSkillSeamanship"         {{checked saved.ltSkillSeamanship}}>         Seamanship</label>
-            <label><input type="checkbox" id="ltSkillShipCarpentry"      {{checked saved.ltSkillShipCarpentry}}>      Ship Carpentry</label>
-            <label><input type="checkbox" id="ltSkillNavigation"         {{checked saved.ltSkillNavigation}}>         Navigation</label>
-            <label><input type="checkbox" id="ltSkillPiloting"           {{checked saved.ltSkillPiloting}}>           Piloting</label>
-            <label><input type="checkbox" id="ltSkillSeaLore"            {{checked saved.ltSkillSeaLore}}>            Sea Lore</label>
-            <label><input type="checkbox" id="ltSkillShipRowing"         {{checked saved.ltSkillShipRowing}}>         Ship Rowing</label>
-            <label><input type="checkbox" id="ltSkillShipSailing"        {{checked saved.ltSkillSailing}}>            Ship Sailing</label>
-            <label><input type="checkbox" id="ltSkillShipwright"         {{checked saved.ltSkillShipwright}}>         Shipwright</label>
-            <label><input type="checkbox" id="ltSkillSignaling"          {{checked saved.ltSkillSignaling}}>          Signaling</label>
-            <label><input type="checkbox" id="ltSkillVesselIdentification" {{checked saved.ltSkillVesselIdentification}}> Vessel Identification</label>
-        </div>
-        </div>
-    </div>
-
-    <footer class="sheet-footer flexrow">
-        <button type="button" class="dialog-button" data-button="cancel">Cancel</button>
-        <button type="submit" class="dialog-button">Start Voyage</button>
-    </footer>
+  <footer class="sheet-footer flexrow">
+    <button type="button" class="dialog-button" data-button="cancel">Cancel</button>
+    <button type="submit" class="dialog-button">Start Voyage</button>
+  </footer>
 </form>

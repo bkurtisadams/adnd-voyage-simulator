@@ -166,20 +166,45 @@ class ADnDVoyageSimulator {
      */
     static addSceneControl() {
         Hooks.on('getSceneControlButtons', (controls) => {
-            const tokenControls = controls.find(c => c.name === 'token');
-            
-            if (tokenControls) {
-                tokenControls.tools.push({
-                    name: 'voyage-simulator',
-                    title: 'ADND_VOYAGE.Controls.OpenSimulator',
-                    icon: 'fas fa-ship',
-                    button: true,
-                    onClick: () => {
-                        new VoyageSetupDialog().render(true);
-                    }
-                });
-            }
-        });
+  try {
+    // Normalize the top-level controls to an array (v13 = array, some modules patch to object)
+    const list = Array.isArray(controls)
+      ? controls
+      : Array.isArray(controls?.controls)
+        ? controls.controls
+        : Array.isArray(controls?.buttons)
+          ? controls.buttons
+          : Object.values(controls ?? {});
+
+    const token = list.find(c => c?.name === 'token');
+    if (!token) return;
+
+    // Normalize tools to an array (some modules convert to object keyed by name)
+    const toolsArr = Array.isArray(token.tools)
+      ? token.tools
+      : token.tools
+        ? Object.values(token.tools)
+        : [];
+
+    // Only add once
+    if (!toolsArr.some(t => t?.name === 'voyage-simulator')) {
+      toolsArr.push({
+        name: 'voyage-simulator',
+        title: game.i18n?.localize?.('ADND_VOYAGE.Controls.OpenSimulator') ?? 'Open Voyage Simulator',
+        icon: 'fas fa-ship',
+        button: true,
+        visible: game.user?.isGM ?? true,
+        onClick: () => new VoyageSetupDialog().render(true)
+      });
+    }
+
+    // Write normalized array back
+    token.tools = toolsArr;
+  } catch (err) {
+    console.error('adnd-voyage-simulator | getSceneControlButtons failed', err, controls);
+  }
+});
+
     }
 
     /**
@@ -230,7 +255,18 @@ Hooks.once('init', async () => {
   ]);
   Handlebars.registerPartial("voyage-captain-tab", captainHbs);
   Handlebars.registerPartial("voyage-lieutenant-tab", lieutenantHbs);
+
+    // Handlebars convenience helpers used by voyage-setup.hbs
+    if (!Handlebars.helpers.selected) {
+        Handlebars.registerHelper('selected', (value, expected) => (value === expected ? 'selected' : ''));
+    }
+    if (!Handlebars.helpers.checked) {
+        Handlebars.registerHelper('checked', (value) => (value ? 'checked' : ''));
+    }
+
 });
+
+
 
 /**
  * Ready hook - add UI elements
@@ -238,6 +274,10 @@ Hooks.once('init', async () => {
 Hooks.once('ready', () => {
     ADnDVoyageSimulator.ready();
     ADnDVoyageSimulator.enhanceChatMessages();
+
+    if (typeof window.openVoyageSimulator !== 'function' && typeof VoyageSetupDialog === 'function') {
+        window.openVoyageSimulator = () => new VoyageSetupDialog().render(true);
+    }
 });
 
 /**
@@ -267,43 +307,40 @@ Hooks.on('renderJournalDirectory', (app, html, data) => {
  * Render actor sheet hook - add voyage button for character sheets
  */
 Hooks.on('renderActorSheet', (app, html, data) => {
-    if (!game.user.isGM) return;
-    if (app.actor.type !== 'character') return;
+  if (!game.user.isGM) return;
+  if (app.actor?.type !== 'character') return;
 
-    // V13: html is now an array [HTMLElement]
-    const element = html[0] || html;
-    const $html = $(element);
+  const element = html[0] || html;
+  const $html = $(element);
+  const sheetActor = app.actor;
 
-    const button = $(`
-        <a class="adnd-voyage-character-button" title="Start Voyage as Captain">
-            <i class="fas fa-anchor"></i> Start Voyage
-        </a>
-    `);
+  const $button = $(
+    `<a class="adnd-voyage-character-button" title="Start Voyage as Captain">
+       <i class="fas fa-anchor"></i> Start Voyage
+     </a>`
+  );
 
-    button.on('click', () => {
-        const dialog = new VoyageSetupDialog();
-        
-        // Pre-populate captain info from character
-        dialog.render(true);
-        
-        // Wait for render, then auto-fill
-        Hooks.once('renderVoyageSetupDialog', (app, html, data) => {
-            html.find('#captainName').val(app.actor.name);
-            
-            // Auto-fill ability scores if available
-            const abilities = app.actor.system?.abilities;
-            if (abilities) {
-                html.find('#str').val(abilities.str?.value || 10);
-                html.find('#dex').val(abilities.dex?.value || 10);
-                html.find('#con').val(abilities.con?.value || 10);
-                html.find('#int').val(abilities.int?.value || 10);
-                html.find('#wis').val(abilities.wis?.value || 10);
-                html.find('#cha').val(abilities.cha?.value || 10);
-            }
-        });
+  $button.on('click', () => {
+    const dialog = new VoyageSetupDialog();
+    dialog.render(true);
+
+    Hooks.once('renderVoyageSetupDialog', (_dlg, dlgHtml /*, dlgData */) => {
+      const $dlg = $(dlgHtml);
+      $dlg.find('#captainName').val(sheetActor.name);
+
+      const abilities = sheetActor.system?.abilities;
+      if (abilities) {
+        $dlg.find('#str').val(abilities.str?.value ?? 10);
+        $dlg.find('#dex').val(abilities.dex?.value ?? 10);
+        $dlg.find('#con').val(abilities.con?.value ?? 10);
+        $dlg.find('#int').val(abilities.int?.value ?? 10);
+        $dlg.find('#wis').val(abilities.wis?.value ?? 10);
+        $dlg.find('#cha').val(abilities.cha?.value ?? 10);
+      }
     });
+  });
 
-    html.find('.window-header .window-title').after(button);
+  $html.find('.window-header .window-title').after($button);
 });
 
 /**
