@@ -11,6 +11,7 @@ import { ProficiencySystem } from '../trading/proficiency.js';
 import { CargoPurchasing } from '../trading/cargo-buy.js';
 import { CargoSelling } from '../trading/cargo-sell.js';
 import { CargoOperations } from '../trading/cargo-operations.js';
+import { TradingStrategy } from '../trading/trading-strategy.js';
 import { ReportGenerator } from '../journal/report-generator.js';
 
 export class VoyageSimulator {
@@ -398,7 +399,8 @@ export class VoyageSimulator {
       if (state.tradeMode === "consignment") {
           await this.loadConsignmentCargo(state, portActivity);
       } else {
-          await this.attemptCargoPurchase(state, originID, portActivity);
+          // At origin, use strategy with all legs ahead
+          await this.attemptStrategicPurchase(state, originID, portActivity, -1, legs);
       }
   }
 
@@ -776,13 +778,43 @@ export class VoyageSimulator {
 
       state.portActivities.push(portActivity);
       
-      // 6. Handle Cargo Trading
-      if (state.currentCargo.loads > 0) {
-          const distanceTraveled = allLegs[legIndex]?.distance || 0;
-          await this.attemptCargoSale(state, portId, portActivity, distanceTraveled);
+      // 6. Handle Cargo Trading with Strategy
+      const isFinalPort = legIndex === allLegs.length - 1;
+      const remainingLegs = allLegs.slice(legIndex + 1);
+      
+      // Calculate cumulative distance traveled with current cargo
+      let cargoDistanceTraveled = 0;
+      if (state.currentCargo.loads > 0 && state.currentCargo.purchaseLegIndex !== undefined) {
+          for (let k = state.currentCargo.purchaseLegIndex; k <= legIndex; k++) {
+              cargoDistanceTraveled += allLegs[k]?.distance || 0;
+          }
       }
-      if (state.tradeMode === "speculation" && state.currentCargo.loads === 0) {
-          await this.attemptCargoPurchase(state, portId, portActivity);
+      
+      // Selling decision
+      if (state.currentCargo.loads > 0 && state.tradeMode === "speculation") {
+          const distanceToNext = remainingLegs[0]?.distance || 0;
+          const sellEval = TradingStrategy.evaluateSale({
+              cargoType: state.currentCargo.type,
+              loadsCurrent: state.currentCargo.loads,
+              purchasePrice: state.currentCargo.purchasePrice,
+              distanceTraveled: cargoDistanceTraveled,
+              distanceToNextPort: distanceToNext,
+              isFinalPort,
+              remainingLegs
+          });
+          
+          if (sellEval.shouldSell) {
+              console.log(`[Voyage Trade] Selling: ${sellEval.reason}`);
+              await this.attemptCargoSale(state, portId, portActivity, cargoDistanceTraveled);
+          } else {
+              console.log(`[Voyage Trade] Holding cargo: ${sellEval.reason}`);
+              state.voyageLogHtml.value += `<p><em>📦 Holding ${state.currentCargo.loads} loads of ${CargoRegistry.get(state.currentCargo.type)?.name}: ${sellEval.reason}</em></p>`;
+          }
+      }
+      
+      // Buying decision  
+      if (state.tradeMode === "speculation" && state.currentCargo.loads === 0 && !isFinalPort) {
+          await this.attemptStrategicPurchase(state, portId, portActivity, legIndex, allLegs);
       }
   }
 
@@ -815,6 +847,106 @@ export class VoyageSimulator {
               purchasePrice: result.purchasePricePerLoad
           };
       }
+  }
+
+  async attemptStrategicPurchase(state, portId, portActivity, legIndex, allLegs) {
+      const isOriginPort = legIndex === -1;
+      const remainingLegs = isOriginPort ? allLegs : allLegs.slice(legIndex + 1);
+      const bestSaleDistance = TradingStrategy.calculateBestSaleDistance(remainingLegs);
+      
+      // Get merchant offers to evaluate
+      const port = PortRegistry.get(portId);
+      const merchantResult = await CargoPurchasing.rollMerchantAvailability(port);
+      
+      state.voyageLogHtml.value += `<p><strong>Merchants in ${port.name}:</strong> ${merchantResult.merchantCount} available (1d6: ${merchantResult.roll} + size mod: ${merchantResult.portSizeMod}).</p>`;
+      
+      if (merchantResult.merchantCount === 0) {
+          state.voyageLogHtml.value += `<p><em>No merchants available at ${port.name}.</em></p>`;
+          return;
+      }
+      
+      // Roll for cargo offer
+      const cargoOffer = await CargoPurchasing.rollCargoOffer({
+          portId,
+          captainProficiencyScores: state.captainProficiencyScores,
+          lieutenantSkills: state.lieutenantSkills,
+          crewQualityMod: state.crewQualityMod
+      });
+      
+      if (!cargoOffer) {
+          state.voyageLogHtml.value += `<p><em>No cargo available at ${port.name}.</em></p>`;
+          return;
+      }
+      
+      // Log skill check results
+      if (cargoOffer.appraisalResult) {
+          const app = cargoOffer.appraisalResult;
+          if (app.success) {
+              state.voyageLogHtml.value += `<p><strong>Appraisal:</strong> SUCCESS (${app.roll} ≤ ${app.needed}) → +1 to goods quality.</p>`;
+          } else if (app.roll % 2 === 1) {
+              state.voyageLogHtml.value += `<p><strong>Appraisal:</strong> FAILED (${app.roll} > ${app.needed}, odd) → -1 to goods quality.</p>`;
+          } else {
+              state.voyageLogHtml.value += `<p><strong>Appraisal:</strong> FAILED (${app.roll} > ${app.needed}, even) → no penalty.</p>`;
+          }
+      }
+      
+      state.voyageLogHtml.value += `<p><strong>Available Cargo:</strong> ${cargoOffer.loadsAvailable} loads of ${cargoOffer.cargoName} @ ${cargoOffer.baseValue} gp/load base.</p>`;
+      
+      if (cargoOffer.bargainResult) {
+          const barg = cargoOffer.bargainResult;
+          if (barg.success) {
+              state.voyageLogHtml.value += `<p><strong>Bargaining:</strong> SUCCESS (${barg.roll} ≤ ${barg.needed}) → ${Math.abs(cargoOffer.bargainAdjustPercent)}% discount.</p>`;
+          } else {
+              state.voyageLogHtml.value += `<p><strong>Bargaining:</strong> FAILED (${barg.roll} > ${barg.needed}) → +${cargoOffer.bargainAdjustPercent}% penalty.</p>`;
+          }
+      }
+      
+      state.voyageLogHtml.value += `<p><strong>Offered Price:</strong> ${cargoOffer.pricePerLoad} gp/load (${Math.round(cargoOffer.pricePerLoad / cargoOffer.baseValue * 100)}% of base).</p>`;
+      
+      // Evaluate with strategy
+      const buyEval = TradingStrategy.evaluatePurchase({
+          cargoType: cargoOffer.cargoType,
+          pricePerLoad: cargoOffer.pricePerLoad,
+          loadsAvailable: cargoOffer.loadsAvailable,
+          shipCapacity: state.ship.cargoCapacity - state.currentCargo.loads,
+          currentTreasury: state.treasury,
+          distanceToNextPort: remainingLegs[0]?.distance || 0,
+          distanceToFinalPort: bestSaleDistance,
+          isOriginPort,
+          isFinalPort: false,
+          remainingLegs
+      });
+      
+      const cargo = CargoRegistry.get(cargoOffer.cargoType);
+      
+      if (!buyEval.shouldBuy) {
+          console.log(`[Voyage Trade] Skipping purchase: ${buyEval.reason}`);
+          state.voyageLogHtml.value += `<p><em>💰 Declined ${cargo?.name || cargoOffer.cargoType}: ${buyEval.reason}</em></p>`;
+          return;
+      }
+      
+      // Proceed with purchase
+      console.log(`[Voyage Trade] Buying: ${buyEval.reason}`);
+      const loadsToBuy = Math.min(buyEval.maxLoads, cargoOffer.loadsAvailable);
+      const totalCost = loadsToBuy * cargoOffer.pricePerLoad;
+      
+      state.treasury -= totalCost;
+      state.expenseTotal += totalCost;
+      if (state.breakdown) state.breakdown.cargo += totalCost;
+      
+      this.recordLedgerEntry(state, this.getCurrentDate(), `Purchased ${loadsToBuy} loads of ${cargo?.name || cargoOffer.cargoType}`, 0, totalCost);
+      
+      state.currentCargo = {
+          type: cargoOffer.cargoType,
+          loads: loadsToBuy,
+          purchasePrice: cargoOffer.pricePerLoad,
+          purchaseLegIndex: isOriginPort ? 0 : legIndex  // Track when cargo was bought
+      };
+      
+      state.voyageLogHtml.value += `<p><strong>📦 Purchased:</strong> ${loadsToBuy} loads of ${cargo?.name} at ${cargoOffer.pricePerLoad} gp/load (${totalCost} gp total)</p>`;
+      state.voyageLogHtml.value += `<p><em>Strategy: ${buyEval.reason}. Expected sale: ${buyEval.expectedSalePrice || '?'} gp/load (${buyEval.distanceBonus || 'varies'})</em></p>`;
+      
+      portActivity.activities.push(`Purchased ${loadsToBuy} loads of ${cargo?.name} for ${totalCost} gp`);
   }
 
   async attemptCargoSale(state, portId, portActivity, distanceTraveled) {

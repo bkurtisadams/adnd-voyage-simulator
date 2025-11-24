@@ -223,4 +223,98 @@ export class CargoPurchasing {
             additionalDays: 0
         };
     }
+
+    /**
+     * Roll merchant availability at a port (without committing to purchase)
+     */
+    static async rollMerchantAvailability(port) {
+        const portSizeMod = PortRegistry.getSizeModifier(port.size);
+        const merchantRoll = new Roll("1d6");
+        await merchantRoll.evaluate();
+        const merchantCount = Math.max(1, merchantRoll.total + portSizeMod);
+        
+        return {
+            merchantCount,
+            roll: merchantRoll.total,
+            portSizeMod
+        };
+    }
+
+    /**
+     * Roll cargo offer from merchants (without committing to purchase)
+     */
+    static async rollCargoOffer(params) {
+        const { portId, captainProficiencyScores, lieutenantSkills, crewQualityMod } = params;
+        
+        const port = PortRegistry.get(portId);
+        const portSizeMod = PortRegistry.getSizeModifier(port.size);
+        
+        // Roll cargo type
+        const baseRollObj = new Roll("3d6");
+        await baseRollObj.evaluate();
+        let rawBaseTypeRoll = baseRollObj.total;
+        let finalBaseTypeRoll = rawBaseTypeRoll + portSizeMod;
+        
+        // Apply Appraisal skill
+        let appraisalAdjust = 0;
+        let appraisalResult = null;
+        if (captainProficiencyScores?.appraisal !== null && captainProficiencyScores?.appraisal !== undefined) {
+            const appCheck = await ProficiencySystem.makeProficiencyCheck(
+                "appraisal",
+                captainProficiencyScores,
+                lieutenantSkills,
+                crewQualityMod,
+                0
+            );
+            appraisalResult = appCheck;
+            if (appCheck.success) {
+                appraisalAdjust = +1;
+            } else if (appCheck.roll % 2 === 1) {
+                appraisalAdjust = -1;
+            }
+        }
+        
+        finalBaseTypeRoll = Math.clamp(finalBaseTypeRoll + appraisalAdjust, 3, 20);
+        const cargoKey = CargoRegistry.determineTypeFromRoll(finalBaseTypeRoll);
+        const cargo = CargoRegistry.get(cargoKey);
+        
+        // Roll quantity
+        const qtyRollObj = new Roll("3d8");
+        await qtyRollObj.evaluate();
+        const qtyAvailable = Math.max(1, qtyRollObj.total - rawBaseTypeRoll);
+        
+        // Apply Bargaining skill
+        let bargainAdjustPercent = 0;
+        let bargainResult = null;
+        if (captainProficiencyScores?.bargaining !== null && captainProficiencyScores?.bargaining !== undefined) {
+            const bargainCheck = await ProficiencySystem.makeProficiencyCheck(
+                "bargaining",
+                captainProficiencyScores,
+                lieutenantSkills,
+                crewQualityMod,
+                0
+            );
+            bargainResult = bargainCheck;
+            if (bargainCheck.success) {
+                const successMargin = Math.clamp(bargainCheck.needed - bargainCheck.roll, 0, 5);
+                bargainAdjustPercent = -(successMargin * 5);
+            } else {
+                const failureMargin = Math.clamp(bargainCheck.roll - bargainCheck.needed, 0, 5);
+                bargainAdjustPercent = (failureMargin * 5);
+            }
+        }
+        
+        const pricePerLoad = Math.max(1, Math.floor(cargo.baseValue * (100 + bargainAdjustPercent) / 100));
+        
+        return {
+            cargoType: cargoKey,
+            cargoName: cargo.name,
+            baseValue: cargo.baseValue,
+            pricePerLoad,
+            loadsAvailable: qtyAvailable,
+            bargainAdjustPercent,
+            appraisalResult,
+            bargainResult
+        };
+    }
 }
