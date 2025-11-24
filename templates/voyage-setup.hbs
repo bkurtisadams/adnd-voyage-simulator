@@ -8,6 +8,7 @@
   <section class="sheet-body">
     <!-- ============ VOYAGE DETAILS ============ -->
     <div class="tab" data-tab="voyage-details">
+      
       <div class="form-group">
         <label for="mode">Simulation Mode:</label>
         <select id="mode" name="mode">
@@ -26,8 +27,7 @@
           {{/each}}
         </select>
       </div>
-      
-      <!-- ... Rest of Voyage Details ... -->
+
       <div class="form-group">
         <label for="routeID">Select Trade Route:</label>
         <select id="routeID" name="routeID" required>
@@ -208,7 +208,7 @@
         <label><input type="checkbox" id="ltSkillPiloting"            name="ltSkillPiloting"            {{checked saved.ltSkillPiloting}}>            Piloting</label>
         <label><input type="checkbox" id="ltSkillSeaLore"             name="ltSkillSeaLore"             {{checked saved.ltSkillSeaLore}}>             Sea Lore</label>
         <label><input type="checkbox" id="ltSkillShipRowing"          name="ltSkillShipRowing"          {{checked saved.ltSkillShipRowing}}>          Ship Rowing</label>
-        <label><input type="checkbox" id="ltSkillShipSailing"         name="ltSkillShipSailing"         {{checked saved.ltSkillSailing}}>         Ship Sailing</label>
+        <label><input type="checkbox" id="ltSkillShipSailing"         name="ltSkillShipSailing"         {{checked saved.ltSkillShipSailing}}>         Ship Sailing</label>
         <label><input type="checkbox" id="ltSkillShipwright"          name="ltSkillShipwright"          {{checked saved.ltSkillShipwright}}>          Shipwright</label>
         <label><input type="checkbox" id="ltSkillSignaling"           name="ltSkillSignaling"           {{checked saved.ltSkillSignaling}}>           Signaling</label>
         <label><input type="checkbox" id="ltSkillVesselIdentification" name="ltSkillVesselIdentification" {{checked saved.ltSkillVesselIdentification}}> Vessel Identification</label>

@@ -72,11 +72,25 @@ export class ReportGenerator {
             commissionRate,
             revenueTotal,
             expenseTotal,
-            crewQuality
+            crewQuality,
+            ledger,      // Added
+            breakdown    // Added
         } = state;
 
         const finalHull = Math.max(0, ship.hullPoints.max - totalHullDamage);
         const ownerNetProfit = treasury - startingCapital;
+
+        // Calculate derived expense values for display
+        const wages = breakdown?.wages || 0;
+        const food = breakdown?.food || 0;
+        const fees = breakdown?.fees || 0;
+        const repairs = breakdown?.repairs || 0;
+        const cargoPurchases = breakdown?.cargo || 0;
+        const taxes = breakdown?.taxes || 0;
+        
+        // Handle misc/rounding differences
+        const calculatedTotal = wages + food + fees + repairs + cargoPurchases + taxes;
+        const misc = expenseTotal - calculatedTotal;
 
         // Calculate profit distribution
         const profitDistribution = this.calculateProfitDistribution({
@@ -85,14 +99,11 @@ export class ReportGenerator {
             ship
         });
 
-        // Build port activities section
+        // Build sections
         const portActivitiesHTML = this.buildPortActivitiesHTML(portActivities, tradeMode);
-
-        // Build repair log section
         const repairLogHTML = this.buildRepairLogHTML(repairLog);
-
-        // Build passenger manifest section
         const passengerManifestHTML = this.buildPassengerManifestHTML(passengerManifest);
+        const ledgerHTML = this.buildLedgerHTML(ledger);
 
         return `
 <!DOCTYPE html>
@@ -137,31 +148,47 @@ export class ReportGenerator {
             </div>
         </div>
 
-        <h2 class="section-header">Operational Expense Breakdown</h2>
-            <div class="info-box">
-                <table style="width:100%; border-collapse: collapse;">
-                    <tr>
-                        <td style="padding: 4px;"><strong>Crew Wages:</strong></td>
-                        <td style="text-align: right;">${state.breakdown?.wages || 0} gp</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 4px;"><strong>Provisions (Food/Water):</strong></td>
-                        <td style="text-align: right;">${state.breakdown?.food || 0} gp</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 4px;"><strong>Port Fees & Pilotage:</strong></td>
-                        <td style="text-align: right;">${state.breakdown?.fees || expenseTotal - (state.breakdown?.wages || 0) - (state.breakdown?.food || 0) - (state.breakdown?.repairs || 0)} gp</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 4px;"><strong>Repairs & Maintenance:</strong></td>
-                        <td style="text-align: right;">${state.breakdown?.repairs || 0} gp</td>
-                    </tr>
-                    <tr style="border-top: 1px solid #8b4513;">
-                        <td style="padding: 4px;"><strong>TOTAL:</strong></td>
-                        <td style="text-align: right;"><strong>${expenseTotal} gp</strong></td>
-                    </tr>
-                </table>
-            </div>
+        <h2 class="section-header">Expense Breakdown</h2>
+        <div class="info-box">
+            <table style="width:100%; border-collapse: collapse;">
+                <tr><td colspan="2" style="border-bottom: 1px solid #8b4513; font-weight: bold; padding-top: 5px;">Operational Expenses</td></tr>
+                <tr>
+                    <td style="padding: 4px;">Crew Wages:</td>
+                    <td style="text-align: right;">${wages} gp</td>
+                </tr>
+                <tr>
+                    <td style="padding: 4px;">Provisions (Food/Water):</td>
+                    <td style="text-align: right;">${food} gp</td>
+                </tr>
+                <tr>
+                    <td style="padding: 4px;">Port Fees & Pilotage:</td>
+                    <td style="text-align: right;">${fees} gp</td>
+                </tr>
+                <tr>
+                    <td style="padding: 4px;">Repairs & Maintenance:</td>
+                    <td style="text-align: right;">${repairs} gp</td>
+                </tr>
+                
+                <tr><td colspan="2" style="border-bottom: 1px solid #8b4513; font-weight: bold; padding-top: 10px;">Trading Expenses</td></tr>
+                <tr>
+                    <td style="padding: 4px;">Cargo Purchases:</td>
+                    <td style="text-align: right;">${cargoPurchases} gp</td>
+                </tr>
+                <tr>
+                    <td style="padding: 4px;">Customs & Taxes:</td>
+                    <td style="text-align: right;">${taxes} gp</td>
+                </tr>
+                ${misc !== 0 ? `<tr><td style="padding: 4px;">Miscellaneous:</td><td style="text-align: right;">${misc} gp</td></tr>` : ''}
+                
+                <tr style="border-top: 2px solid #8b4513; font-weight: bold; background-color: rgba(139,69,19,0.1);">
+                    <td style="padding: 6px;">TOTAL EXPENSES:</td>
+                    <td style="text-align: right; padding: 6px;">${expenseTotal} gp</td>
+                </tr>
+            </table>
+        </div>
+
+        <h2 class="section-header">Financial Ledger</h2>
+        ${ledgerHTML}
 
         <h2 class="section-header">Division of Profits</h2>
 
@@ -215,6 +242,44 @@ export class ReportGenerator {
     </div>
 </body>
 </html>
+        `;
+    }
+
+    /**
+     * Build HTML for the Financial Ledger table
+     */
+    static buildLedgerHTML(ledger) {
+        if (!ledger || ledger.length === 0) {
+            return "<p>No ledger entries.</p>";
+        }
+
+        const rows = ledger.map(entry => `
+            <tr>
+                <td style="padding: 5px; border-bottom: 1px solid #ddd;">${entry.date}</td>
+                <td style="padding: 5px; border-bottom: 1px solid #ddd;">${entry.description}</td>
+                <td style="padding: 5px; border-bottom: 1px solid #ddd; text-align: right; color: #28a745;">${entry.income ? '+' + entry.income + ' gp' : ''}</td>
+                <td style="padding: 5px; border-bottom: 1px solid #ddd; text-align: right; color: #dc3545;">${entry.expense ? '-' + entry.expense + ' gp' : ''}</td>
+                <td style="padding: 5px; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">${entry.balance} gp</td>
+            </tr>
+        `).join('');
+
+        return `
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px;">
+                    <thead>
+                        <tr style="background: #8b4513; color: white;">
+                            <th style="padding: 8px; text-align: left;">Date</th>
+                            <th style="padding: 8px; text-align: left;">Description</th>
+                            <th style="padding: 8px; text-align: right;">Income</th>
+                            <th style="padding: 8px; text-align: right;">Expense</th>
+                            <th style="padding: 8px; text-align: right;">Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows}
+                    </tbody>
+                </table>
+            </div>
         `;
     }
 

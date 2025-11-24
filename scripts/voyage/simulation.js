@@ -62,117 +62,83 @@ export class VoyageSimulator {
    * Start a new voyage simulation
    */
   async startVoyage(voyageConfig) {
-        // Normalize mode: "auto" (default) or "manual" (GM day-by-day)
     const mode = (voyageConfig?.mode === "manual") ? "manual" : "auto";
-
-    // Give each voyage a stable id & label
     const voyageId = voyageConfig?.voyageId || crypto.randomUUID?.() || `${Date.now()}-${Math.floor(Math.random()*1e6)}`;
-    const label = voyageConfig?.name || `${voyageConfig?.routeId || "route"} — ${voyageConfig?.shipId || "ship"}`;
+    
+    // Initialize state
+    const voyageState = this.initializeVoyageState(voyageConfig);
+    voyageState.id = voyageId;
+    voyageState.mode = mode;
 
-    // Seed state for both modes (shared shape)
-    const state = {
-      id: voyageId,
-      name: label,
-      mode,
-      day: 0,
-      calendarDay: voyageConfig?.calendarDay ?? null,  // optional: in-world date
-      routeId: voyageConfig?.routeId,
-      shipId: voyageConfig?.shipId,
-      position: { routeSegment: 0, milesOnSegment: 0 },
-      gold: voyageConfig?.startingGold ?? 0,
-      weatherSeed: voyageConfig?.weatherSeed ?? null,
-      captain: voyageConfig?.captain ?? null,
-      lieutenant: voyageConfig?.lieutenant ?? null,
-      crew: voyageConfig?.crew ?? null,
-      cargo: [],
-      maintenance: { daysSinceService: 0, speedPenalty: 0, quality: "Average" },
-      ship: voyageConfig?.shipTemplate ?? null,  // resolved later if needed
-      flags: { atSea: true, inPort: false, finished: false, lastPortId: voyageConfig?.startPortId ?? null },
-      log: []
-    };
+    const validation = this.validatevoyageConfig(voyageConfig);
+    if (!validation.valid) {
+        ui.notifications.error(validation.message);
+        return null;
+    }
 
-        // Ensure ship & route are resolved even for manual mode
-    try {
-      if (!state.ship && voyageConfig?.shipId) {
-        state.ship = ShipRegistry.createInstance?.(voyageConfig.shipId) || state.ship;
-      }
-      if (!state.route && voyageConfig?.routeId) {
-        state.route = RouteRegistry.get?.(voyageConfig.routeId) || null;
-        if (state.flags?.lastPortId == null && state.route?.ports?.length) {
-          state.flags.lastPortId = state.route.ports[0];
+    // Weather System Setup
+    if (globalThis.dndWeather?.weatherSystem) {
+        const system = globalThis.dndWeather.weatherSystem;
+        system.settings.latitude = voyageConfig.latitude;
+        system.settings.longitude = voyageConfig.longitude;
+        system.settings.terrain = "coast-warm";
+        system.settings.elevation = 0;
+        system.settings.locationName = PortRegistry.get(voyageState.route.ports[0])?.name || "At Sea";
+
+        if (system.calendarTracker && voyageConfig.startingYear && voyageConfig.startingMonth && voyageConfig.startingDay) {
+            system.calendarTracker.setDate({
+                year: voyageConfig.startingYear,
+                month: voyageConfig.startingMonth,
+                day: voyageConfig.startingDay,
+                hour: 6,
+                minute: 0
+            });
+            console.log(`[Voyage Setup] Date set to: ${system.calendarTracker.getDateString()}`);
         }
-      }
-    } catch (e) {
-      console.warn("VoyageSimulator: failed to resolve ship/route for manual mode", e);
     }
 
+    // Initial Ledger Entry
+    const startDate = this.getCurrentDate();
+    this.recordLedgerEntry(voyageState, startDate, "Beginning of trade simulation", voyageState.treasury, 0, true);
+    console.log(`[Voyage Ledger] Initial Balance: ${voyageState.treasury} gp on ${startDate}`);
 
-    // Persist and branch
-    await VoyageSimulator.saveState(voyageId, state);
+    // Persist State
+    this.activeVoyages.set(voyageId, voyageState);
+    await VoyageSimulator.saveState(voyageId, voyageState);
+
     if (mode === "manual") {
-      // Do NOT loop; let the GM roll day-by-day
-      return voyageId;
+        console.log(`Voyage ${voyageId} initialized in MANUAL mode.`);
+        return voyageId;
+    } else {
+        await this.runSimulation(voyageId);
+        return voyageId;
     }
+  }
 
-      const {
-          shipId,
-          routeId,
-          captain,
-          lieutenant,
-          startingGold,
-          tradeMode,
-          commissionRate,
-          latitude,
-          longitude,
-          autoRepair,
-          enableRowing,
-          automateTrading,
-          startingYear,
-          startingMonth,
-          startingDay,
-          crewQuality
-      } = voyageConfig;
-
-      // Initialize voyage state FIRST
-      const voyageState = this.initializeVoyageState(voyageConfig);
-      
-      // Validate configuration
-      const validation = this.validatevoyageConfig(voyageConfig);
-      if (!validation.valid) {
-          ui.notifications.error(validation.message);
-          return null;
+  /**
+   * Helper to record financial transaction to ledger
+   */
+  recordLedgerEntry(state, date, description, income, expense, setBalance = false) {
+      let newBalance = 0;
+      if (setBalance) {
+          newBalance = income;
+      } else {
+          const lastEntry = state.ledger[state.ledger.length - 1];
+          const prevBalance = lastEntry ? lastEntry.balance : 0;
+          newBalance = prevBalance + income - expense;
       }
 
-      // Setup weather system AFTER state is created
-      if (globalThis.dndWeather?.weatherSystem) {
-          const system = globalThis.dndWeather.weatherSystem;
-          
-          system.settings.latitude = latitude;
-          system.settings.longitude = longitude;
-          system.settings.terrain = "coast-warm";
-          system.settings.elevation = 0;
-          system.settings.locationName = PortRegistry.get(voyageState.route.ports[0])?.name || "At Sea";
-
-          // Initialize calendar
-          if (system.calendarTracker && startingYear && startingMonth && startingDay) {
-              system.calendarTracker.setDate({
-                  year: startingYear,
-                  month: startingMonth,
-                  day: startingDay,
-                  hour: 6,
-                  minute: 0
-              });
-              
-              console.log("Set voyage start date:", system.calendarTracker.getDateString());
-          }
-      }
-
-      // Store active voyage
-      const autoVoyageId = foundry.utils.randomID();
-      this.activeVoyages.set(autoVoyageId, voyageState);
-      await this.runSimulation(autoVoyageId);
+      state.ledger.push({
+          date: date,
+          description: description,
+          income: income > 0 ? income : null,
+          expense: expense > 0 ? expense : null,
+          balance: newBalance
+      });
       
-      return autoVoyageId;
+      if (!setBalance) {
+          console.log(`[Voyage Ledger] ${date} | ${description} | +${income} -${expense} | Bal: ${newBalance}`);
+      }
   }
 
   /**
@@ -182,49 +148,101 @@ export class VoyageSimulator {
       const ship = ShipRegistry.createInstance(config.shipId);
       const route = RouteRegistry.get(config.routeId);
       
-      // Calculate proficiency scores
       const captainProficiencyScores = ProficiencySystem.createProficiencyScores(config.captain);
       const lieutenantSkills = config.lieutenant?.skills ?? {};
       const crewQualityMod = ProficiencySystem.getCrewQualityModifier(config.crewQuality);
 
-      // --- EXPENSE CALCULATION (Oops, I'm at Sea, p.14, 42) ---
-      // Wages (monthly): Sailor 2gp, Oarsman 5gp, Marine 3gp, Capt 100gp/lvl, Lt 100gp/lvl
-      // For simplicity, assume Capt/Lt are level 5 and 3 respectively if not specified.
+      // --- EXPENSE CALCULATION (Based on DMG 1e, p.33-34) ---
       let monthlyWage = 0;
+      let totalCrewCount = 0;
+      
+      // 1. Basic Crew Wages (Sailors, Oarsmen, Marines)
       if (ship.crew) {
           ship.crew.forEach(group => {
-              let wage = 2; // Default sailor
-              if (group.role === 'oarsman') wage = 5;
-              if (group.role === 'marine') wage = 3;
-              if (group.role === 'mate') wage = 10; // Estimate for Mate
-              monthlyWage += (group.count * wage);
+              let wage = 0;
+              // "Sailors cost 2 g.p. per month"
+              if (group.role === 'sailor' || group.role === 'sailors') wage = 2;
+              // "Oarsmen ... cost 5 g.p. per month"
+              else if (group.role === 'oarsman' || group.role === 'oarsmen') wage = 5;
+              // "Marines ... cost 3 g.p. per month"
+              else if (group.role === 'marine' || group.role === 'marines') wage = 3;
+              
+              // Do not count officers in this loop, we calculate them based on rules below
+              if (['lieutenant', 'mate', 'captain'].includes(group.role)) return;
+
+              if (wage > 0) {
+                  monthlyWage += (group.count * wage);
+                  totalCrewCount += group.count;
+              }
           });
       }
-      // Officers (Base cost, assuming hired NPC rates)
-      monthlyWage += 500; // Captain
-      monthlyWage += 300; // Lieutenant
 
-      // Food: 7gp per week per 5 crew => ~0.2gp per person per day
-      const totalCrewCount = (ship.crew || []).reduce((a, b) => a + b.count, 0) + 2; // + officers
-      const dailyFoodCost = Math.ceil((totalCrewCount / 5) * 1); // Roughly 1gp per 5 crew per day (7gp/week)
+      console.log(`[Voyage Expenses] Base Crew Count: ${totalCrewCount}. Base Crew Wage: ${monthlyWage} gp/mo`);
+
+      // 2. Officer Requirements & Wages
+      // "For every 20 crewmen... there must be 1 lieutenant and 2 mates."
+      // "Each master or captain will have at least one lieutenant and several mates."
+      // Interpretation: Minimum 1 Lt and 2 Mates. Scale up for every full 20 crew.
+      const requiredLieutenants = Math.max(1, Math.ceil(totalCrewCount / 20));
+      const requiredMates = Math.max(2, Math.ceil(totalCrewCount / 10)); // 2 per 20 = 1 per 10
+
+      // Mates: "Cost 30 g.p. per month"
+      const matesCost = requiredMates * 30;
+      monthlyWage += matesCost;
+
+      // Lieutenants: "Cost... 100 g.p. per month per level"
+      // Default mercenary lieutenant level is usually 2 or 3.
+      const ltLevel = config.lieutenant.level || 3; 
+      const ltCost = requiredLieutenants * (ltLevel * 100);
+      monthlyWage += ltCost;
+
+      // Captain: "Cost... 100 g.p. per month per level"
+      // "1-4 = 5th, 5-7 = 6th, 8-9 = 7th, 0 = 8th"
+      let capLevel = config.captain.level;
+      if (!capLevel) {
+          const roll = Math.floor(Math.random() * 10) + 1; // d10
+          if (roll <= 4) capLevel = 5;
+          else if (roll <= 7) capLevel = 6;
+          else if (roll <= 9) capLevel = 7;
+          else capLevel = 8;
+          console.log(`[Voyage Expenses] Rolled Random Captain Level: ${capLevel} (Roll: ${roll})`);
+      }
+      const captainCost = capLevel * 100;
+      monthlyWage += captainCost;
+
+      // Total Complement for Food Calc
+      const totalSouls = totalCrewCount + requiredMates + requiredLieutenants + 1; // +1 Captain
+
+      console.log(`[Voyage Expenses] Officers: 1 Capt (Lvl ${capLevel}), ${requiredLieutenants} Lts (Lvl ${ltLevel}), ${requiredMates} Mates.`);
+      console.log(`[Voyage Expenses] Officer Wages: Capt ${captainCost} + Lts ${ltCost} + Mates ${matesCost} = ${captainCost + ltCost + matesCost} gp`);
+      console.log(`[Voyage Expenses] Total Monthly Wage Bill: ${monthlyWage} gp`);
+
+      // 3. Food Costs (Calculated Weekly per DMG "Supplies")
+      // 7gp per week per 5 crew.
+      // Weekly cost = (TotalSouls / 5) * 7.
+      // Daily cost = Weekly cost / 7 = TotalSouls / 5 * 1gp.
+      const dailyFoodCost = Math.ceil(totalSouls / 5); 
 
       const dailyWageCost = Math.ceil(monthlyWage / 30);
+      
+      console.log(`[Voyage Expenses] Daily Burn: Wages ${dailyWageCost} gp + Food ${dailyFoodCost} gp = ${dailyWageCost + dailyFoodCost} gp/day`);
 
       return {
-          id: config.voyageId || foundry.utils.randomID(), // Ensure ID exists
-          mode: config.mode || 'auto',
-          
-          // Ship & Route
+          // Core Data
           ship: ship,
           route: route,
           
-          // Characters
-          captain: config.captain,
-          lieutenant: config.lieutenant,
+          // Actors
+          captain: { ...config.captain, level: capLevel }, // Store calculated level
+          lieutenant: { ...config.lieutenant, level: ltLevel },
+          officerCounts: {
+              lieutenants: requiredLieutenants,
+              mates: requiredMates
+          },
           captainProficiencyScores: captainProficiencyScores,
           lieutenantSkills: lieutenantSkills,
           
-          // Settings
+          // Configuration
           tradeMode: config.tradeMode,
           commissionRate: config.commissionRate,
           autoRepair: config.autoRepair,
@@ -233,32 +251,29 @@ export class VoyageSimulator {
           crewQuality: config.crewQuality,
           crewQualityMod: crewQualityMod,
           
-          // Financial tracking
+          // Finances
           treasury: config.startingGold,
           startingCapital: config.startingGold,
           crewEarningsFromTrade: 0,
           revenueTotal: 0,
           expenseTotal: 0,
-          dailyOperationalCost: dailyWageCost + dailyFoodCost, // Store for daily deduction
-          breakdown: {
-              wages: 0,
-              food: 0,
-              repairs: 0,
-              fees: 0
-          },
           
-          // Cargo state
-          currentCargo: {
-              type: null,
-              loads: 0,
-              purchasePrice: 0
-          },
+          // Ledger & Expenses
+          ledger: [],
+          dailyOperationalCost: dailyWageCost + dailyFoodCost,
+          legAccumulatedCost: 0,
+          breakdown: { wages: 0, food: 0, repairs: 0, fees: 0, cargo: 0, taxes: 0 },
           
-          // Voyage tracking
+          // Cargo
+          currentCargo: { type: null, loads: 0, purchasePrice: 0 },
+          
+          // Tracking
           totalDays: 0,
           totalDistance: 0,
           totalHullDamage: ship.hullPoints.max - ship.hullPoints.value,
           consecutiveRowingDays: 0,
+          position: { routeSegment: 0, milesOnSegment: 0 }, 
+          weatherSeed: null,
           
           // Logs
           voyageLogHtml: { value: "" },
@@ -267,6 +282,7 @@ export class VoyageSimulator {
           portActivities: [],
           repairLog: [],
           passengerManifest: [],
+          log: [], 
           
           // Maintenance
           shipMaintenanceStatus: {
@@ -276,138 +292,87 @@ export class VoyageSimulator {
               speedPenalty: 0,
               temporaryRepairs: []
           },
+          maintenance: { daysSinceService: 0, speedPenalty: 0, quality: "Average" },
           
-          // Dates
+          // Dates & Flags
           shipStartDate: null,
-          shipEndDate: null
+          shipEndDate: null,
+          flags: { atSea: true, inPort: false, finished: false, lastPortId: config.routeId ? RouteRegistry.get(config.routeId).ports[0] : null }
       };
   }
 
-  /**
-   * Validate voyage configuration
-   */
+  // ... (Rest of the file remains the same: validatevoyageConfig, runSimulation, buildRouteLegs, etc.) ...
   validatevoyageConfig(config) {
-      if (!ShipRegistry.get(config.shipId)) {
-          return { valid: false, message: "Invalid ship ID" };
-      }
-      
-      if (!RouteRegistry.get(config.routeId)) {
-          return { valid: false, message: "Invalid route ID" };
-      }
-      
-      if (config.startingGold < 0) {
-          return { valid: false, message: "Starting gold must be >= 0" };
-      }
-      
-      if (config.tradeMode === "consignment" && 
-          (config.commissionRate < 10 || config.commissionRate > 40)) {
+      if (!ShipRegistry.get(config.shipId)) return { valid: false, message: "Invalid ship ID" };
+      if (!RouteRegistry.get(config.routeId)) return { valid: false, message: "Invalid route ID" };
+      if (config.startingGold < 0) return { valid: false, message: "Starting gold must be >= 0" };
+      if (config.tradeMode === "consignment" && (config.commissionRate < 10 || config.commissionRate > 40)) {
           return { valid: false, message: "Commission rate must be 10-40%" };
       }
-      
-      if (!config.captain?.name) {
-          return { valid: false, message: "Captain must have a name" };
-      }
-      
+      if (!config.captain?.name) return { valid: false, message: "Captain must have a name" };
       return { valid: true };
   }
 
-  /**
-   * Main simulation loop
-   */
   async runSimulation(voyageId) {
       const state = this.activeVoyages.get(voyageId);
       if (!state) return;
 
-      // Build route legs
       const legs = this.buildRouteLegs(state.route);
-      
-      // Calculate total distance
       state.totalDistance = legs.reduce((sum, leg) => sum + leg.distance, 0);
       
-      // Process origin port
       await this.processOriginPort(state, legs);
       
-      // Sail each leg
       for (let i = 0; i < legs.length; i++) {
           const legComplete = await this.sailLeg(state, legs[i], i, legs);
           
           if (!legComplete) {
-              // Ship sank or voyage aborted
               await this.handleVoyageFailure(state);
               return;
           }
           
-          // Process arrival at destination port
           if (i < legs.length - 1 || this.isCircuitRoute(state.route)) {
               await this.processPort(state, legs[i].toID, i, legs);
           }
           
-          // Check if ship is still seaworthy
           if (state.ship.hullPoints.value <= 0) {
               await this.handleVoyageFailure(state);
               return;
           }
       }
       
-      // Voyage complete - finalize
       await this.finalizeVoyage(state);
   }
 
-  /**
-   * Build leg objects from route
-   */
   buildRouteLegs(route) {
       const legs = [];
       const ports = route.ports;
-      
       for (let i = 0; i < ports.length - 1; i++) {
           const distance = PortRegistry.getDistance(ports[i], ports[i + 1]);
-          if (!distance) {
-              console.error(`Missing distance for ${ports[i]} → ${ports[i + 1]}`);
-              continue;
-          }
-          legs.push({
-              fromID: ports[i],
-              toID: ports[i + 1],
-              distance: distance
-          });
+          if (!distance) continue;
+          legs.push({ fromID: ports[i], toID: ports[i + 1], distance: distance });
       }
-      
-      // Add return leg if circuit
       if (route.name.toLowerCase().includes("circuit") && legs.length > 0) {
           const lastPort = ports[ports.length - 1];
           const firstPort = ports[0];
           const returnDist = PortRegistry.getDistance(lastPort, firstPort);
-          if (returnDist) {
-              legs.push({ fromID: lastPort, toID: firstPort, distance: returnDist });
-          }
+          if (returnDist) legs.push({ fromID: lastPort, toID: firstPort, distance: returnDist });
       }
-      
       return legs;
   }
 
-  /**
-   * Check if route is a circuit
-   */
   isCircuitRoute(route) {
       return route.name.toLowerCase().includes("circuit");
   }
 
-  /**
-   * Process activities at origin port
-   */
   async processOriginPort(state, legs) {
       const originID = state.route.ports[0];
       const originPort = PortRegistry.get(originID);
       const originName = originPort.name;
       
-      // Capture start date
       state.shipStartDate = this.getCurrentDate();
-      
       state.portsVisited.push(originName);
       state.voyageLogHtml.value += `<h2>Voyage Commenced: ${originName}</h2>`;
       
-      // Create port activity record
       const portActivity = {
           portName: originName,
           portType: "origin",
@@ -417,18 +382,18 @@ export class VoyageSimulator {
           totalCost: 0
       };
       
-      // Calculate port fees
-      const portFees = await this.calculatePortFees(state, originPort, 3); // 3 days at origin
+      const portFees = await this.calculatePortFees(state, originPort, 3);
       portActivity.fees = portFees;
       portActivity.totalCost = portFees.total;
       state.treasury -= portFees.total;
       state.expenseTotal += portFees.total;
       
-      state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp (Entrance: ${portFees.entrance} gp, Moorage: ${portFees.moorage.cost} gp, Pilot: ${portFees.pilot} gp)</p>`;
+      this.recordLedgerEntry(state, this.getCurrentDate(), `Port fees at ${originName}`, 0, portFees.total);
+      if (state.breakdown) state.breakdown.fees += portFees.total;
       
+      state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp (Entrance: ${portFees.entrance} gp, Moorage: ${portFees.moorage.cost} gp, Pilot: ${portFees.pilot} gp)</p>`;
       state.portActivities.push(portActivity);
       
-      // Handle initial cargo loading
       if (state.tradeMode === "consignment") {
           await this.loadConsignmentCargo(state, portActivity);
       } else {
@@ -437,115 +402,94 @@ export class VoyageSimulator {
   }
 
   async calculatePortFees(state, port, daysInPort) {
-      // Port entrance fee: d10 + 10
       const entranceRoll = new Roll("1d10 + 10");
-      await entranceRoll.evaluate({async: true});
+      await entranceRoll.evaluate();
       const entrance = entranceRoll.total;
       
-      // Pilot/towage: 1 gp per hull point (required at origin and each destination)
       const pilot = state.ship.hullPoints.max;
       
-      // Moorage: 80% chance of berth, otherwise anchor
-      const berthRoll = new Roll("1d100");
-      await berthRoll.evaluate({async: true});
-      const hasBerth = berthRoll.total <= 80;
+      // ECONOMY TWEAK: Prefer Anchor (5gp) over Berth (1gp/HP) to save money
+      // Only take a berth if the ship needs repairs (>10% damage) or it's very cheap
+      const needsRepair = (state.ship.hullPoints.max - state.ship.hullPoints.value) > (state.ship.hullPoints.max * 0.1);
+      const berthIsCheap = state.ship.hullPoints.max <= 5; // Very small boats
       
+      const berthAvailableRoll = new Roll("1d100");
+      await berthAvailableRoll.evaluate();
+      const berthAvailable = berthAvailableRoll.total <= 80;
+
       let moorageCost, moorageType;
-      if (hasBerth) {
-          moorageCost = state.ship.hullPoints.max * daysInPort; // 1 gp/hull point/day
+      if (berthAvailable && (needsRepair || berthIsCheap)) {
+          moorageCost = state.ship.hullPoints.max * daysInPort;
           moorageType = "berth";
       } else {
-          moorageCost = 5 * daysInPort; // 5 gp/day at anchor
+          moorageCost = 5 * daysInPort;
           moorageType = "anchor";
       }
       
       return {
           entrance: entrance,
           pilot: pilot,
-          moorage: {
-              cost: moorageCost,
-              type: moorageType,
-              days: daysInPort
-          },
+          moorage: { cost: moorageCost, type: moorageType, days: daysInPort },
           total: entrance + pilot + moorageCost
       };
   }
 
-  /**
-   * Sail a single leg
-   */
   async sailLeg(state, leg, legIndex, allLegs) {
       const fromName = PortRegistry.get(leg.fromID).name;
       const toName = PortRegistry.get(leg.toID).name;
       
-      state.voyageLogHtml.value += `
-          <h4>Leg ${legIndex + 1}: ${fromName} → ${toName}</h4>
-          <p><strong>Distance:</strong> ${leg.distance} miles</p>
-      `;
+      state.voyageLogHtml.value += `<h4>Leg ${legIndex + 1}: ${fromName} → ${toName}</h4><p><strong>Distance:</strong> ${leg.distance} miles</p>`;
       
       let remainingDistance = leg.distance;
       let sailingDays = 0;
       
-      // Day-by-day sailing simulation
       while (remainingDistance > 0 || sailingDays === 0) {
           const dayResult = await this.simulateSailingDay(state, toName, remainingDistance);
-          
-          if (dayResult.shipSank) {
-              return false;
-          }
-          
+          if (dayResult.shipSank) return false;
           remainingDistance -= dayResult.distanceCovered;
           sailingDays++;
           state.totalDays++;
-          
           this.advanceDay();
       }
-      
       return true;
   }
 
-  /**
-   * Simulate a single day of sailing
-   */
   async simulateSailingDay(state, destinationName, remainingDistance) {
       const dateStr = this.getCurrentDate();
       
-      // Generate weather for the day using the global weather system
-      let weather = null;
+      if (state.dailyOperationalCost) {
+          state.expenseTotal += state.dailyOperationalCost;
+          state.treasury -= state.dailyOperationalCost;
+          state.legAccumulatedCost = (state.legAccumulatedCost || 0) + state.dailyOperationalCost;
+          
+          if (state.breakdown) {
+              const foodRatio = 0.3; 
+              const dailyFood = Math.floor(state.dailyOperationalCost * foodRatio);
+              state.breakdown.food += dailyFood;
+              state.breakdown.wages += (state.dailyOperationalCost - dailyFood);
+          }
+      }
+
       let parsedWeather = null;
-      
       if (globalThis.dndWeather?.weatherSystem) {
           const weatherArr = await globalThis.dndWeather.weatherSystem.generateWeather();
-          weather = weatherArr[0];
+          const weather = weatherArr[0];
           globalThis.dndWeather.weatherSystem.setCurrentWeather(weather);
           
-          // Parse weather data from your weather module format
           const temp = weather.baseConditions?.temperature;
           const wind = weather.baseConditions?.wind;
           const precip = weather.baseConditions?.precipitation;
           
           parsedWeather = {
-              temperature: {
-                  high: temp?.high || 70,
-                  low: temp?.low || 50
-              },
-              wind: {
-                  speed: wind?.speed || 10,
-                  direction: wind?.direction || "N"
-              },
-              precipitation: {
-                  type: precip?.type || "none",
-                  duration: precip?.duration || 0
-              },
+              temperature: { high: temp?.high || 70, low: temp?.low || 50 },
+              wind: { speed: wind?.speed || 10, direction: wind?.direction || "N" },
+              precipitation: { type: precip?.type || "none", duration: precip?.duration || 0 },
               sky: weather.baseConditions?.sky || "clear",
               raw: weather
           };
       } else {
-          // Fallback weather if module not available
-          console.warn("Weather module not available, using fallback");
           const windRoll = new Roll("2d10 + 5");
-          await windRoll.evaluate({async: true});
-          
+          await windRoll.evaluate();
           parsedWeather = {
               temperature: { high: 70, low: 55 },
               wind: { speed: windRoll.total, direction: "Variable" },
@@ -555,7 +499,6 @@ export class VoyageSimulator {
           };
       }
       
-      // Calculate sailing speed based on weather
       const baseSpeed = state.ship.movement * this.MILES_PER_INCH_DAILY;
       const speedInfo = this.calculateSailingSpeed(baseSpeed, parsedWeather);
       
@@ -563,20 +506,16 @@ export class VoyageSimulator {
       let damage = 0;
       let shipSank = false;
       
-      // Check if becalmed
       if (speedInfo.becalmed) {
           state.voyageLogHtml.value += `<p><strong>${dateStr}:</strong> Becalmed! No progress made. ${speedInfo.note}</p>`;
-          
-          // Try rowing if enabled
           if (state.enableRowing) {
               const { NavigationSystem } = await import('./navigation.js');
               const rowingInfo = NavigationSystem.handleRowing(
                   state.enableRowing,
                   (state.ship?.crew || []).find(c => c.role === "oarsmen")?.count || 0,
                   state.consecutiveRowingDays,
-                  8 // base rowing speed in miles/day
+                  8
               );
-              
               if (rowingInfo.canRow) {
                   distanceCovered = Math.min(rowingInfo.rowingSpeed, remainingDistance);
                   state.consecutiveRowingDays++;
@@ -584,95 +523,45 @@ export class VoyageSimulator {
               }
           }
       } else {
-          // Normal sailing
           state.consecutiveRowingDays = 0;
           distanceCovered = Math.min(speedInfo.speed, remainingDistance);
-          
-          // Check for weather hazards
           const { NavigationSystem } = await import('./navigation.js');
           const hazard = NavigationSystem.assessWeatherHazard(parsedWeather);
 
           if (hazard && hazard.hazardType) {
-
-              // Require piloting check
               const pilotCheck = await NavigationSystem.makePilotingCheck(
-                  state.captainProficiencyScores,
-                  state.lieutenantSkills,
-                  state.crewQualityMod,
-                  hazard.pilotingModifier
+                  state.captainProficiencyScores, state.lieutenantSkills, state.crewQualityMod, hazard.pilotingModifier
               );
-              
               if (!pilotCheck.success) {
-                  damage = await NavigationSystem.calculateHazardDamage(
-                      hazard.hazardType,
-                      pilotCheck.missedBy
-                  );
-                  
+                  damage = await NavigationSystem.calculateHazardDamage(hazard.hazardType, pilotCheck.missedBy);
                   state.ship.hullPoints.value -= damage;
                   state.totalHullDamage += damage;
-                  
                   state.voyageLogHtml.value += `<p><strong>⚠️ ${hazard.description}!</strong> Piloting check failed by ${pilotCheck.missedBy}. Hull damage: ${damage} HP. (${state.ship.hullPoints.value}/${state.ship.hullPoints.max} remaining)</p>`;
-                  
-                  if (state.ship.hullPoints.value <= 0) {
-                      shipSank = true;
-                  }
+                  if (state.ship.hullPoints.value <= 0) shipSank = true;
               }
           }
       }
       
-      // Log weather
       const weatherLog = this.formatWeatherLog(dateStr, parsedWeather, speedInfo, destinationName);
       state.weatherLogHtml.value += weatherLog;
-
-      // --- DEDUCT DAILY EXPENSES ---
-      // Wages and Food are continuous costs
-      if (state.dailyOperationalCost) {
-          state.expenseTotal += state.dailyOperationalCost;
-          state.treasury -= state.dailyOperationalCost;
-          
-          // Track specifics if breakdown exists
-          if (state.breakdown) {
-              // Split roughly based on the initialization ratio
-              // This is an estimation for the report
-              const foodRatio = 0.4; // approximated
-              const dailyFood = Math.floor(state.dailyOperationalCost * foodRatio);
-              state.breakdown.food += dailyFood;
-              state.breakdown.wages += (state.dailyOperationalCost - dailyFood);
-          }
-      }
       
-      // Check for encounters
       const { EncounterSystem } = await import('./encounters.js');
       const encounter = await EncounterSystem.rollForEncounter("dawn");
       
       if (encounter) {
           const encounterText = EncounterSystem.generateEncounterText(encounter);
           state.voyageLogHtml.value += `<p><strong>🎲 Encounter:</strong> ${encounterText}</p>`;
-          
-          // Calculate encounter damage if applicable
-          const encounterDamage = await EncounterSystem.calculateEncounterDamage(
-              encounter.encounter,
-              encounter.classification
-          );
-          
+          const encounterDamage = await EncounterSystem.calculateEncounterDamage(encounter.encounter, encounter.classification);
           if (encounterDamage > 0) {
               state.ship.hullPoints.value -= encounterDamage;
               state.totalHullDamage += encounterDamage;
               damage += encounterDamage;
-              
               state.voyageLogHtml.value += `<p>Encounter damage: ${encounterDamage} HP. (${state.ship.hullPoints.value}/${state.ship.hullPoints.max} remaining)</p>`;
-              
-              if (state.ship.hullPoints.value <= 0) {
-                  shipSank = true;
-              }
+              if (state.ship.hullPoints.value <= 0) shipSank = true;
           }
       }
       
-      return {
-          distanceCovered: distanceCovered,
-          shipSank: shipSank,
-          damage: damage
-      };
+      return { distanceCovered, shipSank, damage };
   }
 
   calculateSailingSpeed(baseSpeed, weather) {
@@ -680,7 +569,6 @@ export class VoyageSimulator {
       let speedNote = "";
       const windSpeed = weather.wind.speed;
 
-      // Wind effects
       if (windSpeed < 5) {
           currentSpeed = 0;
           speedNote = "Becalmed! Wind too light for sailing (< 5 mph).";
@@ -697,7 +585,6 @@ export class VoyageSimulator {
           speedNote = `Strong winds (${windSpeed} mph). Speed increased by ${bonus} mi/day.`;
       }
 
-      // Wet sails bonus
       if (["drizzle", "rainstorm-light", "rainstorm-heavy", "hailstorm"].includes(weather.precipitation.type)) {
           const wetBonus = Math.floor(Math.random() * 6) + 5;
           const bonusMiles = Math.floor(currentSpeed * (wetBonus / 100));
@@ -705,36 +592,29 @@ export class VoyageSimulator {
           speedNote += ` Wet sails: +${bonusMiles} mi.`;
       }
 
-      return {
-          speed: currentSpeed,
-          note: speedNote,
-          becalmed: false
-      };
+      return { speed: currentSpeed, note: speedNote, becalmed: false };
   }
 
   formatWeatherLog(dateStr, weather, speedInfo, destination) {
       const temp = weather.temperature;
       const wind = weather.wind;
       const precip = weather.precipitation;
-
-      return `<p><strong>${dateStr} (sailing to ${destination}):</strong> ` +
-          `High ${temp.high}°F, Low ${temp.low}°F | ${weather.sky} | ` +
-          `Wind ${wind.speed} mph ${wind.direction} | ` +
-          `${precip.type !== "none" ? `${precip.type} (${precip.duration}h)` : "No precipitation"}. ` +
-          `${speedInfo.note}</p>`;
+      return `<p><strong>${dateStr} (sailing to ${destination}):</strong> High ${temp.high}°F, Low ${temp.low}°F | ${weather.sky} | Wind ${wind.speed} mph ${wind.direction} | ${precip.type !== "none" ? `${precip.type} (${precip.duration}h)` : "No precipitation"}. ${speedInfo.note}</p>`;
   }
 
-  /**
-   * Process port arrival and activities
-   */
   async processPort(state, portId, legIndex, allLegs) {
       const port = PortRegistry.get(portId);
       const portName = port.name;
       state.portsVisited.push(portName);
       
-      // Determine days in port (2-4 days for intermediate, 3 days for final)
+      // 1. Clear accumulated sea expenses
+      if (state.legAccumulatedCost && state.legAccumulatedCost > 0) {
+          this.recordLedgerEntry(state, this.getCurrentDate(), "Voyage expenses (Wages & Provisions)", 0, state.legAccumulatedCost);
+          state.legAccumulatedCost = 0;
+      }
+
+      // 2. Determine time in port
       const daysInPort = legIndex === allLegs.length - 1 ? 3 : Math.floor(Math.random() * 3) + 2;
-      
       const portActivity = {
           portName: portName,
           portType: legIndex === allLegs.length - 1 ? "destination" : "intermediate",
@@ -744,43 +624,85 @@ export class VoyageSimulator {
           totalCost: 0
       };
       
-      // Calculate and deduct port fees
+      // 3. Calculate and pay Port Fees
       const portFees = await this.calculatePortFees(state, port, daysInPort);
       portActivity.fees = portFees;
       portActivity.totalCost = portFees.total;
       state.treasury -= portFees.total;
       state.expenseTotal += portFees.total;
       
+      this.recordLedgerEntry(state, this.getCurrentDate(), `Port fees at ${portName}`, 0, portFees.total);
+      if (state.breakdown) state.breakdown.fees += portFees.total;
+      
       state.voyageLogHtml.value += `<h3>Arrived at ${portName}</h3>`;
       state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp</p>`;
       
-      // Advance days for port stay
+      // 4. Simulate Days in Port (Weather & Costs)
       for (let i = 0; i < daysInPort; i++) {
           this.advanceDay();
-          
-          // Generate weather while in port
+          if (state.dailyOperationalCost) {
+              state.expenseTotal += state.dailyOperationalCost;
+              state.treasury -= state.dailyOperationalCost;
+              state.legAccumulatedCost = (state.legAccumulatedCost || 0) + state.dailyOperationalCost;
+              
+              if (state.breakdown) {
+                  const foodRatio = 0.3;
+                  const dailyFood = Math.floor(state.dailyOperationalCost * foodRatio);
+                  state.breakdown.food += dailyFood;
+                  state.breakdown.wages += (state.dailyOperationalCost - dailyFood);
+              }
+          }
+
+          // Restore Weather System Logic
+          // Note: Assumes weather.js is in the same folder
           const { WeatherSystem } = await import('./weather.js');
           const weather = await WeatherSystem.generateDayWeather();
           const weatherLog = WeatherSystem.formatPortWeatherLog(this.getCurrentDate(), weather, portName);
           state.weatherLogHtml.value += weatherLog;
       }
       
+      // 5. Handle Passengers
+      // Calculate remaining distance on the route
+      let distanceRemaining = 0;
+      for (let k = legIndex + 1; k < allLegs.length; k++) {
+          distanceRemaining += allLegs[k].distance;
+      }
+
+      if (distanceRemaining > 0) {
+          // FIX: Use local import path. 
+          // Ensure passengers.js is in scripts/voyage/ alongside simulation.js
+          const { PassengerBooking } = await import('./passengers.js');
+          
+          const passResult = await PassengerBooking.handlePassengerBooking({
+              portId: portId,
+              currentTreasury: state.treasury,
+              currentPortActivity: portActivity,
+              voyageLogHtmlRef: state.voyageLogHtml,
+              passengerManifest: state.passengerManifest,
+              routeLegs: allLegs,
+              currentLegIndex: legIndex + 1,
+              automateTrading: state.automateTrading
+          });
+
+          if (passResult.revenueEarned > 0) {
+              state.treasury = passResult.newTreasury;
+              state.revenueTotal += passResult.revenueEarned;
+              this.recordLedgerEntry(state, this.getCurrentDate(), `Passenger Revenue from ${portName}`, passResult.revenueEarned, 0);
+          }
+      }
+
       state.portActivities.push(portActivity);
       
-      // Attempt cargo sale if carrying cargo
+      // 6. Handle Cargo Trading
       if (state.currentCargo.loads > 0) {
-          await this.attemptCargoSale(state, portId, portActivity, allLegs[legIndex - 1]?.distance || 0);
+          const distanceTraveled = allLegs[legIndex]?.distance || 0;
+          await this.attemptCargoSale(state, portId, portActivity, distanceTraveled);
       }
-      
-      // Attempt cargo purchase if in speculation mode and hold empty
       if (state.tradeMode === "speculation" && state.currentCargo.loads === 0) {
           await this.attemptCargoPurchase(state, portId, portActivity);
       }
   }
 
-  /**
-   * Attempt to purchase cargo
-   */
   async attemptCargoPurchase(state, portId, portActivity) {
       const result = await CargoPurchasing.handleCargoPurchase({
           portId: portId,
@@ -799,7 +721,11 @@ export class VoyageSimulator {
       state.treasury = result.newTreasury;
       state.expenseTotal += result.totalPurchaseCost;
       
+      if (state.breakdown) state.breakdown.cargo += result.totalPurchaseCost;
+
       if (result.loadsBought > 0) {
+          console.log(`[Voyage Trade] Purchased ${result.loadsBought} loads of ${result.cargoType} for ${result.totalPurchaseCost} gp`);
+          this.recordLedgerEntry(state, this.getCurrentDate(), `Purchased ${result.loadsBought} loads of ${CargoRegistry.get(result.cargoType)?.name || result.cargoType}`, 0, result.totalPurchaseCost);
           state.currentCargo = {
               type: result.cargoType,
               loads: result.loadsBought,
@@ -808,11 +734,7 @@ export class VoyageSimulator {
       }
   }
 
-  /**
-   * Attempt to sell cargo
-   */
   async attemptCargoSale(state, portId, portActivity, distanceTraveled) {
-      // Check perishability first
       const perishResult = await CargoPerishability.applyPerishability(
           state.currentCargo.type,
           distanceTraveled,
@@ -825,11 +747,8 @@ export class VoyageSimulator {
           state.currentCargo = { type: null, loads: 0, purchasePrice: 0 };
           return;
       }
-      
-      // Update cargo quantity after perishability
       state.currentCargo.loads = perishResult.loadsRemaining;
       
-      // Attempt sale
       const result = await CargoSelling.handleCargoSale({
           portId: portId,
           currentTreasury: state.treasury,
@@ -852,101 +771,81 @@ export class VoyageSimulator {
       state.crewEarningsFromTrade = result.newCrewEarningsFromTrade;
       state.expenseTotal += result.taxAmount;
       
-      // Clear cargo after sale
+      if (state.breakdown) state.breakdown.taxes += result.taxAmount;
+      
+      if (result.totalSaleValueForOwner > 0) {
+          state.revenueTotal += result.totalSaleValueForOwner; 
+          this.recordLedgerEntry(state, this.getCurrentDate(), `Sold ${state.currentCargo.loads} loads of ${CargoRegistry.get(state.currentCargo.type)?.name || state.currentCargo.type}`, result.totalSaleValueForOwner, 0);
+      }
+      
+      if (result.taxAmount > 0) {
+          this.recordLedgerEntry(state, this.getCurrentDate(), `Customs tax at ${PortRegistry.get(portId).name}`, 0, result.taxAmount);
+      }
+
       state.currentCargo = { type: null, loads: 0, purchasePrice: 0 };
   }
 
-  /**
-   * Load consignment cargo at origin
-   */
   async loadConsignmentCargo(state, portActivity) {
       state.currentCargo = {
           type: "consumer",
           loads: state.ship.cargoCapacity,
           purchasePrice: 0
       };
-      
       const cargo = CargoRegistry.get("consumer");
-      
-      // Calculate transport fee for the route
-      // Sum all leg distances to get total journey distance
       const totalRouteDistance = state.route.ports.reduce((total, port, index, ports) => {
           if (index === 0) return 0;
           const distance = PortRegistry.getDistance(ports[index - 1], port);
           return total + (distance || 0);
       }, 0);
-      
-      // Calculate transport fee: 40 gp per ton (2 loads) per 500 miles, min 100 gp
       const tons = state.currentCargo.loads / 2;
       const segments = Math.ceil(totalRouteDistance / 500);
       const totalTransportFee = Math.max(tons * 40 * segments, 100);
-      
-      // Charge half upfront
       const upfrontPayment = Math.floor(totalTransportFee / 2);
+      
       state.treasury += upfrontPayment;
       state.revenueTotal += upfrontPayment;
       
+      this.recordLedgerEntry(state, this.getCurrentDate(), "Consignment Upfront Payment", upfrontPayment, 0);
+
       state.voyageLogHtml.value += `<p><strong>Consignment Load:</strong> ${cargo.name} (${state.currentCargo.loads} loads). Commission: ${state.commissionRate}%</p>`;
       state.voyageLogHtml.value += `<p><strong>Transport Fee (upfront payment):</strong> ${upfrontPayment} gp (${totalTransportFee} gp total for ${totalRouteDistance} miles, ${upfrontPayment} gp due on delivery)</p>`;
-      
       portActivity.activities.push(`Loaded ${state.currentCargo.loads} loads of ${cargo.name} on consignment.`);
       portActivity.activities.push(`Received upfront transport payment: ${upfrontPayment} gp`);
   }
 
-  /**
-   * Get current date from weather system
-   */
   getCurrentDate() {
-      // Try to get from weather system's calendar tracker
       if (globalThis.dndWeather?.weatherSystem?.calendarTracker) {
           return globalThis.dndWeather.weatherSystem.calendarTracker.getDateString();
       }
-      
-      // Fallback to current weather timestamp
       if (globalThis.dndWeather?.weatherSystem?.currentWeather?.timestamp) {
           return globalThis.dndWeather.weatherSystem.currentWeather.timestamp;
       }
-      
-      console.warn("Weather system date not available");
       return "Unknown Date";
   }
 
-  /**
-   * Advance calendar by one day
-   */
   advanceDay() {
       if (globalThis.dndWeather?.weatherSystem?.calendarTracker) {
           globalThis.dndWeather.weatherSystem.calendarTracker.advanceDay();
-          console.log("Advanced day to:", globalThis.dndWeather.weatherSystem.calendarTracker.getDateString());
       }
   }
 
-  /**
-   * Handle voyage failure (ship sank)
-   */
   async handleVoyageFailure(state) {
       await ChatMessage.create({
           speaker: ChatMessage.getSpeaker({ alias: "Voyage Simulator" }),
-          content: `
-              <h3>⚓ Voyage FAILED: ${state.ship.name} Sank</h3>
-              <p><strong>Captain:</strong> ${state.captain.name}</p>
-              <p><strong>Total Days:</strong> ${state.totalDays}</p>
-              <p><strong>Distance Sailed:</strong> ${state.totalDistance} miles</p>
-          `
+          content: `<h3>⚓ Voyage FAILED: ${state.ship.name} Sank</h3><p><strong>Captain:</strong> ${state.captain.name}</p><p><strong>Total Days:</strong> ${state.totalDays}</p><p><strong>Distance Sailed:</strong> ${state.totalDistance} miles</p>`
       });
   }
 
-  /**
-   * Finalize voyage and generate reports
-   */
   async finalizeVoyage(state) {
-      // SET END DATE HERE
       state.shipEndDate = this.getCurrentDate();
+      
+      if (state.legAccumulatedCost && state.legAccumulatedCost > 0) {
+          this.recordLedgerEntry(state, state.shipEndDate, "Final Voyage expenses", 0, state.legAccumulatedCost);
+          state.legAccumulatedCost = 0;
+      }
 
-      // Generate journal entry
       await ReportGenerator.createVoyageJournal(state);
       
-      // Create summary chat message
       const ownerNetProfit = state.treasury - state.startingCapital;
       const profitDistribution = ReportGenerator.calculateProfitDistribution({
           ownerNetProfit,
@@ -970,14 +869,9 @@ export class VoyageSimulator {
                   <p><strong>Crew Payout:</strong> ${profitDistribution.totalCrewPayout} gp</p>
               </div>
           `,
-          flags: {
-              'adnd-voyage-simulator': {
-                  voyageComplete: true
-              }
-          }
+          flags: { 'adnd-voyage-simulator': { voyageComplete: true } }
       });
       
-      // Clean up active voyage
       for (const [id, s] of this.activeVoyages.entries()) {
         if (s === state) { this.activeVoyages.delete(id); break; }
       }
@@ -985,26 +879,34 @@ export class VoyageSimulator {
       ui.notifications.info(`Voyage complete! Journal entry created.`);
   }
 
-    /** GM-facing helper: roll exactly one day on a manual voyage */
+  // ==========================================================================
+  // MANUAL MODE LOGIC
+  // ==========================================================================
+
   async rollNextDay(voyageId, decisions = {}) {
     return this.simulateDay(voyageId, decisions);
   }
 
-  /**
-   * Simulate exactly one sea day. Returns a detailed DayResult and the mutated state.
-   * This powers both "manual" and "auto" modes.
-   */
   async simulateDay(voyageId, decisions = {}) {
     const state = await VoyageSimulator.loadState(voyageId);
     if (!state || state.flags.finished) throw new Error("Voyage not found or already finished.");
 
-    // --- 1) Weather for the day ---
+    if (state.dailyOperationalCost) {
+        state.expenseTotal += state.dailyOperationalCost;
+        state.treasury -= state.dailyOperationalCost;
+        state.legAccumulatedCost = (state.legAccumulatedCost || 0) + state.dailyOperationalCost;
+        
+        if (state.breakdown) {
+            const foodRatio = 0.3;
+            const dailyFood = Math.floor(state.dailyOperationalCost * foodRatio);
+            state.breakdown.food += dailyFood;
+            state.breakdown.wages += (state.dailyOperationalCost - dailyFood);
+        }
+    }
+
     const weather = await this._getOrRollWeatherForDay(state);
 
-    // --- 2) Base miles & penalties ---
-    // movement inches -> miles/day baseline
-    const baseMiles = (state.ship?.movement ?? 6) * (this.MILES_PER_INCH_DAILY ?? 24); // keep your constant
-    // Maintenance + hull penalties (FIX: ensure these actually bite)
+    const baseMiles = (state.ship?.movement ?? 6) * (this.MILES_PER_INCH_DAILY ?? 24); 
     const hullMax  = state.ship?.hullPoints?.max ?? 0;
     const hullVal  = state.ship?.hullPoints?.value ?? hullMax;
     const hullLost = Math.max(0, hullMax - hullVal);
@@ -1016,23 +918,18 @@ export class VoyageSimulator {
     } catch {}
 
     const maintPenaltyPct = Number(state.maintenance?.speedPenalty ?? 0);
-
     const penalizedBase = Math.max(0, Math.floor(baseMiles * (100 - hullPenaltyPct - maintPenaltyPct) / 100));
 
-    // --- 3) Sailing speed vs wind band ---
     const speedInfo = this.calculateSailingSpeed(penalizedBase, weather);
     let milesToday = speedInfo.speed || 0;
 
-    // --- 4) Navigation accuracy & drift (optional if you add the helpers) ---
     let navCheck = null;
     try {
       const { NavigationSystem } = await import("./navigation.js");
-      navCheck = NavigationSystem.makeDailyNavigationCheck?.(state, weather) || null; // include % error, fog drift, current mods, etc.
+      navCheck = NavigationSystem.makeDailyNavigationCheck?.(state, weather) || null;
       if (navCheck?.milesLost) milesToday = Math.max(0, milesToday - navCheck.milesLost);
-      if (navCheck?.courseError) this._applyCourseError?.(state, navCheck.courseError);
     } catch {}
 
-    // --- 5) Hazards: check every 5 miles while in hazardous segments ---
     const hazards = [];
     try {
       const { NavigationSystem } = await import("./navigation.js");
@@ -1047,18 +944,13 @@ export class VoyageSimulator {
       }
     } catch {}
 
-    // --- 6) Advance along route & check for port arrival ---
     const travel = this._advancePosition(state, milesToday);
     const arrived = travel?.arrivedPortId ?? null;
 
-    // --- 7) If GM chose to lay-to/repair/trade (decisions), apply here ---
     await this._applyDayDecisions(state, decisions, arrived);
 
-    // --- 8) Maintenance tick, supplies, wages (if you later add) ---
     state.maintenance.daysSinceService = (state.maintenance.daysSinceService ?? 0) + 1;
-    // Optionally update state.maintenance.speedPenalty based on days since service/quality.
 
-    // --- 9) Stamp log & persist ---
     const result = {
       day: state.day + 1,
       weather, speedInfo, navCheck,
@@ -1075,18 +967,16 @@ export class VoyageSimulator {
     return { state, result };
   }
 
-    // ---- helpers used above (keep tiny; call your existing systems where possible) ----
   async _getOrRollWeatherForDay(state) {
     try {
       const { WeatherSystem } = await import("./weather.js");
-      return await WeatherSystem.rollDay(state.weatherSeed);
+      return await WeatherSystem.generateDayWeather();
     } catch {
       return { wind:{speed: 10, direction:"N"}, precipitation:{type:"none",duration:0}, sky:"clear", temperature:{high:70,low:55} };
     }
   }
 
   _segmentIsHazard(state) {
-    // TODO: consult your RouteRegistry for the current segment's hazard tag
     return !!state?.routeSegmentHazard;
   }
 
@@ -1095,7 +985,6 @@ export class VoyageSimulator {
     if (!haz || haz.severity === "NONE") return { severity: "NONE" };
     const pilotRoll = NavigationSystem.makePilotingCheck?.(state, haz, decisions?.pilotMods ?? 0);
     const dmg = NavigationSystem.calculateHazardDamage?.(haz.type, haz.severity, pilotRoll?.missBy ?? 0);
-    // Apply to ship hull/rigging if present
     if (dmg?.hull) {
       state.ship.hullPoints.value = Math.max(0, state.ship.hullPoints.value - dmg.hull);
     }
@@ -1103,21 +992,16 @@ export class VoyageSimulator {
   }
 
   _advancePosition(state, milesToday) {
-    // TODO: advance along route geometry; if end of segment == port, return its id
     state.position.milesOnSegment += milesToday;
     return { arrivedPortId: null };
   }
 
   async _applyDayDecisions(state, decisions, arrivedPortId) {
-    // Respect GM choices per-day (repairs, heave-to, trade days, etc.)
     if (decisions?.heaveTo) return;
     if (arrivedPortId && decisions?.autoTradeDays) {
       try {
         const { CargoSelling } = await import("../trading/cargo-sell.js");
-        // run X days of port ops here (buy/sell/repairs) if you want a one-click helper
       } catch {}
     }
   }
 }
-
-

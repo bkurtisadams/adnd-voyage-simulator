@@ -7,7 +7,7 @@ import { ShipRegistry } from '../data/ships.js';
 import { PortRegistry } from '../data/ports.js';
 import { RouteRegistry } from '../data/routes.js';
 import { VoyageSimulator } from '../voyage/simulation.js';
-import { CrewGenerator } from '../data/crew-generator.js'; // Ensure this path matches your folder structure
+import { CrewGenerator } from '../data/crew-generator.js';
 
 export class VoyageSetupDialog extends FormApplication {
 
@@ -74,7 +74,7 @@ export class VoyageSetupDialog extends FormApplication {
         data.saved = this.savedData;
         data.saved.startingGold = data.saved.startingGold || 1000;
         data.saved.tradeMode = data.saved.tradeMode || "speculation";
-        data.saved.mode = data.saved.mode || "auto"; // Default to automated
+        data.saved.mode = data.saved.mode || "auto";
         data.saved.commissionRate = data.saved.commissionRate || 25;
         data.saved.latitude = data.saved.latitude || 40;
         data.saved.longitude = data.saved.longitude || 0;
@@ -113,8 +113,7 @@ export class VoyageSetupDialog extends FormApplication {
         event.preventDefault();
         const type = event.currentTarget.dataset.type; // 'captain' or 'lieutenant'
         const rank = type === 'captain' ? 'Captain' : 'Lieutenant';
-        const prefix = type === 'captain' ? '' : 'lt'; // Prefix for ID selectors
-
+        
         // Generate data
         const generated = CrewGenerator.generate(rank);
 
@@ -124,24 +123,35 @@ export class VoyageSetupDialog extends FormApplication {
 
         // Populate Attributes
         const attrPrefix = type === 'captain' ? '#' : '#lt';
-        this.element.find(`${attrPrefix}str`).val(generated.str);
-        this.element.find(`${attrPrefix}dex`).val(generated.dex);
-        this.element.find(`${attrPrefix}con`).val(generated.con);
-        this.element.find(`${attrPrefix}int`).val(generated.int);
-        this.element.find(`${attrPrefix}wis`).val(generated.wis);
-        this.element.find(`${attrPrefix}cha`).val(generated.cha);
+        const strId = type === 'captain' ? '#str' : '#ltStr'; // specialized due to handlebars logic/ids in template
+        const dexId = type === 'captain' ? '#dex' : '#ltDex';
+        const conId = type === 'captain' ? '#con' : '#ltCon';
+        const intId = type === 'captain' ? '#int' : '#ltInt';
+        const wisId = type === 'captain' ? '#wis' : '#ltWis';
+        const chaId = type === 'captain' ? '#cha' : '#ltCha';
+
+        this.element.find(strId).val(generated.str);
+        this.element.find(dexId).val(generated.dex);
+        this.element.find(conId).val(generated.con);
+        this.element.find(intId).val(generated.int);
+        this.element.find(wisId).val(generated.wis);
+        this.element.find(chaId).val(generated.cha);
 
         // Populate Skills
         // First clear all checkboxes for this tab
         const skillPrefix = type === 'captain' ? '#skill' : '#ltSkill';
-        this.element.find(`input[id^="${skillPrefix.replace('#', '')}"]`).prop('checked', false);
+        
+        // Uncheck all first
+        this.element.find(`div[data-tab="${type}-info"] input[type="checkbox"]`).prop('checked', false);
 
         // Check generated skills
         for (const [skill, hasSkill] of Object.entries(generated.skills)) {
             if (hasSkill) {
-                // Capitalize first letter for ID matching (e.g. skillBargaining)
-                const skillId = skill.charAt(0).toUpperCase() + skill.slice(1);
-                this.element.find(`${skillPrefix}${skillId}`).prop('checked', true);
+                // Construct ID: e.g. #skillBargaining or #ltSkillBargaining
+                // Ensure capitalization matches template IDs
+                const capitalizedSkill = skill.charAt(0).toUpperCase() + skill.slice(1);
+                const selector = `${skillPrefix}${capitalizedSkill}`;
+                this.element.find(selector).prop('checked', true);
             }
         }
     }
@@ -191,7 +201,7 @@ export class VoyageSetupDialog extends FormApplication {
 
         const simulator = new VoyageSimulator();
         
-        // Check mode and alert user
+        // Notify user of mode
         if (voyageConfig.mode === 'manual') {
             ui.notifications.info("Initializing Manual Voyage. Use the macro or sidebar to advance days.");
         } else {
@@ -205,10 +215,9 @@ export class VoyageSetupDialog extends FormApplication {
         const html = this.element;
 
         return {
-            // Core
             shipID: html.find('#shipID').val(),
             routeID: html.find('#routeID').val(),
-            mode: html.find('#mode').val(), // New Mode Selection
+            mode: html.find('#mode').val(),
             
             // Captain
             captainName: html.find('#captainName').val(),
@@ -260,7 +269,7 @@ export class VoyageSetupDialog extends FormApplication {
             ltSkillSignaling: html.find('#ltSkillSignaling').is(':checked'),
             ltSkillVesselIdentification: html.find('#ltSkillVesselIdentification').is(':checked'),
             
-            // Voyage Settings
+            // Settings
             startingGold: parseInt(html.find('#startingGold').val()),
             tradeMode: html.find('input[name="tradeMode"]:checked').val(),
             commissionRate: parseInt(html.find('#commissionRate').val()),
@@ -277,29 +286,14 @@ export class VoyageSetupDialog extends FormApplication {
     }
 
     _validateFormData(data) {
-        if (!data.shipID) {
-            return { valid: false, message: "Please select a ship" };
-        }
-        if (!data.routeID) {
-            return { valid: false, message: "Please select a route" };
-        }
-        if (!data.captainName) {
-            return { valid: false, message: "Captain must have a name" };
-        }
-        if (data.startingGold < 0) {
-            return { valid: false, message: "Starting gold must be >= 0" };
-        }
+        if (!data.shipID) return { valid: false, message: "Please select a ship" };
+        if (!data.routeID) return { valid: false, message: "Please select a route" };
+        if (!data.captainName) return { valid: false, message: "Captain must have a name" };
+        if (data.startingGold < 0) return { valid: false, message: "Starting gold must be >= 0" };
         if (data.tradeMode === "consignment" && (data.commissionRate < 10 || data.commissionRate > 40)) {
             return { valid: false, message: "Commission rate must be 10-40%" };
         }
-        if (!data.startingMonth) {
-            return { valid: false, message: "Please select a starting month" };
-        }
-
-        const abilities = [data.str, data.dex, data.con, data.int, data.wis, data.cha];
-        if (abilities.some(a => a < 3 || a > 18 || isNaN(a))) {
-            return { valid: false, message: "Abilities must be 3-18" };
-        }
+        if (!data.startingMonth) return { valid: false, message: "Please select a starting month" };
 
         return { valid: true };
     }
@@ -308,7 +302,7 @@ export class VoyageSetupDialog extends FormApplication {
         return {
             shipId: formData.shipID,
             routeId: formData.routeID,
-            mode: formData.mode, // Pass mode to config
+            mode: formData.mode,
             captain: {
                 name: formData.captainName,
                 strScore: formData.str,

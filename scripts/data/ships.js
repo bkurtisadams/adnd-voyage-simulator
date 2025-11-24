@@ -12,12 +12,12 @@ export class ShipRegistry {
             id: "small_merchant_1",
             name: "Surprise",
             shipType: "Small Merchant Vessel",
-            hullPoints: { value: 24, max: 24 },
-            cargoCapacity: 20,
+            hullPoints: { value: 36, max: 36 },
+            cargoCapacity: 30,
             movement: 15, // inches per round (5 mph tactical, scales to 120 mi/day)
             baseEarningsPerDay: 50,
             currentPort: "greyhawk_city",
-            captain: { name: "Captain Beldan", level: 6 },
+            captain: { name: "Captain Beldan", level: 5 },
             crew: [
                 { role: "lieutenant", level: 1, count: 1 },
                 { role: "mate", level: 0, count: 1 },
