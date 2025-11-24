@@ -228,6 +228,13 @@ export class ReportGenerator {
             ${this.formatWeatherLog(weatherLogHtml.value)}
         </div>
 
+        ${voyageLogHtml.value ? `
+        <h2 class="section-header">Ship's Log — Events and Encounters</h2>
+        <div class="voyage-events-log">
+            ${voyageLogHtml.value}
+        </div>
+        ` : ''}
+
         <h2 class="section-header">Condition of Vessel</h2>
         <div class="log-entry">
             The vessel ${ship.name} completed this voyage in ${this.getVesselConditionDescription(finalHull, ship.hullPoints.max)}. Total damage sustained during the voyage amounted to ${totalHullDamage} hull points from weather and sea conditions encountered.
@@ -367,6 +374,26 @@ export class ReportGenerator {
         line-height: 1.5;
         max-height: 400px;
         overflow-y: auto;
+    }
+
+    .voyage-events-log {
+        background: rgba(139, 69, 19, 0.08);
+        border: 2px solid #8b4513;
+        border-radius: 5px;
+        padding: 20px;
+        margin: 20px 0;
+        font-size: 14px;
+        line-height: 1.6;
+    }
+
+    .voyage-events-log p {
+        margin: 8px 0;
+        padding: 5px 0;
+        border-bottom: 1px dotted rgba(139, 69, 19, 0.3);
+    }
+
+    .voyage-events-log p:last-child {
+        border-bottom: none;
     }
 
     .signature-block {

@@ -1,6 +1,15 @@
 /**
  * Cargo Perishability System
  * Handles cargo spoilage based on distance and time
+ * 
+ * Per AD&D rules: "Cargo can be perishable. If the distance traveled since the
+ * last transaction is greater than the distance rolled, 25% of the time 25% of 
+ * the cargo will have perished for each additional unit of travel."
+ * 
+ * The d6 distance roll (from sale price calculation) determines perishability:
+ * - Short (1-2): <80 miles threshold
+ * - Medium (3-5): ≤250 miles threshold  
+ * - Long (6): ≤500 miles threshold
  */
 
 import { CargoRegistry } from '../data/cargo.js';
@@ -9,66 +18,53 @@ export class CargoPerishability {
 
     /**
      * Check if cargo has perished during voyage
-     * @param {string} cargoType - Type of cargo
-     * @param {number} distanceTraveled - Actual distance traveled since purchase
+     * @param {Object} distanceRollInfo - {roll, category, threshold, actualDistance} from sale calculation
      * @param {number} currentLoads - Current number of loads
-     * @returns {Object} {loadsLost, loadsRemaining, perishabilityNote}
+     * @returns {Object} {loadsLost, loadsRemaining, perishabilityNote, spoiled}
      */
-    static async checkPerishability(cargoType, distanceTraveled, currentLoads) {
-        // Roll d6 to determine distance category threshold (not actual distance)
-        const distanceRoll = new Roll("1d6");
-        await distanceRoll.evaluate();
+    static async checkPerishability(distanceRollInfo, currentLoads) {
+        const { roll, category, threshold, actualDistance } = distanceRollInfo;
         
-        let distanceCategory;
-        let distanceThreshold;
-        
-        if (distanceRoll.total <= 2) { 
-            distanceCategory = "Short";
-            distanceThreshold = 80;
-        } else if (distanceRoll.total <= 5) { 
-            distanceCategory = "Medium";
-            distanceThreshold = 250;
-        } else { 
-            distanceCategory = "Long";
-            distanceThreshold = 500;
-        }
-        
-        // If actual distance is within threshold, cargo is fine
-        if (distanceTraveled <= distanceThreshold) {
+        // If actual distance is within threshold, cargo is fine - no logging needed
+        if (actualDistance <= threshold) {
             return {
                 loadsLost: 0,
                 loadsRemaining: currentLoads,
-                perishabilityNote: `Cargo intact (${distanceTraveled} mi ≤ ${distanceThreshold} mi ${distanceCategory} threshold)`,
-                distanceRoll: distanceRoll.total,
-                threshold: distanceThreshold
+                perishabilityNote: null,
+                spoiled: false
             };
         }
         
         // Calculate how many distance "units" beyond threshold we traveled
-        const excessUnits = this.calculateExcessUnits(
-            distanceCategory,
-            distanceTraveled,
-            distanceThreshold
-        );
+        const excessUnits = this.calculateExcessUnits(category, actualDistance);
         
         if (excessUnits === 0) {
             return {
                 loadsLost: 0,
                 loadsRemaining: currentLoads,
-                perishabilityNote: `Cargo intact (within ${distanceCategory} category)`,
-                distanceRoll: distanceRoll.total,
-                threshold: distanceThreshold
+                perishabilityNote: null,
+                spoiled: false
             };
         }
         
-        // Roll for spoilage on each excess unit
+        // Roll for spoilage on each excess unit (25% chance of 25% loss each)
         const spoilageResults = await this.rollSpoilage(excessUnits, currentLoads);
+        
+        // Only generate note if something actually spoiled
+        if (spoilageResults.totalLost === 0) {
+            return {
+                loadsLost: 0,
+                loadsRemaining: currentLoads,
+                perishabilityNote: null,
+                spoiled: false
+            };
+        }
         
         const loadsRemaining = currentLoads - spoilageResults.totalLost;
         const perishabilityNote = this.buildPerishabilityNote(
-            distanceTraveled,
-            distanceThreshold,
-            distanceCategory,
+            actualDistance,
+            threshold,
+            category,
             excessUnits,
             spoilageResults
         );
@@ -77,8 +73,9 @@ export class CargoPerishability {
             loadsLost: spoilageResults.totalLost,
             loadsRemaining: loadsRemaining,
             perishabilityNote: perishabilityNote,
-            distanceRoll: distanceRoll.total,
-            threshold: distanceThreshold,
+            spoiled: true,
+            distanceRoll: roll,
+            threshold: threshold,
             excessUnits: excessUnits,
             spoilageDetails: spoilageResults.details
         };
@@ -87,22 +84,20 @@ export class CargoPerishability {
     /**
      * Calculate how many distance units beyond threshold
      */
-    static calculateExcessUnits(category, actualDistance, threshold) {
+    static calculateExcessUnits(category, actualDistance) {
         let excessUnits = 0;
         
         if (category === "Short" && actualDistance > 80) {
-            // Short -> Medium (80-250)
-            if (actualDistance > 500) excessUnits = 3; // -> Long -> Extraordinary
-            else if (actualDistance > 250) excessUnits = 2; // -> Long
-            else excessUnits = 1; // -> Medium
+            if (actualDistance > 500) excessUnits = 3;
+            else if (actualDistance > 250) excessUnits = 2;
+            else excessUnits = 1;
         } 
         else if (category === "Medium" && actualDistance > 250) {
-            // Medium -> Long (250-500)
-            if (actualDistance > 500) excessUnits = 2; // -> Long -> Extraordinary
-            else excessUnits = 1; // -> Long
+            if (actualDistance > 500) excessUnits = 2;
+            else excessUnits = 1;
         } 
         else if (category === "Long" && actualDistance > 500) {
-            excessUnits = 1; // -> Extraordinary
+            excessUnits = 1;
         }
         
         return excessUnits;
@@ -110,6 +105,7 @@ export class CargoPerishability {
 
     /**
      * Roll for spoilage on each excess unit
+     * 25% chance that 25% of remaining cargo perishes per excess unit
      */
     static async rollSpoilage(excessUnits, startingLoads) {
         let totalLost = 0;
@@ -119,8 +115,7 @@ export class CargoPerishability {
             const perishChance = new Roll("1d100");
             await perishChance.evaluate();
             
-            if (perishChance.total <= 25) { // 25% chance
-                // 25% of REMAINING cargo perishes
+            if (perishChance.total <= 25) {
                 const currentRemaining = startingLoads - totalLost;
                 const lostThisUnit = Math.ceil(currentRemaining * 0.25);
                 totalLost += lostThisUnit;
@@ -129,16 +124,14 @@ export class CargoPerishability {
                     unit: unit + 1,
                     roll: perishChance.total,
                     spoiled: true,
-                    loadsLost: lostThisUnit,
-                    note: `Unit ${unit + 1}: ${lostThisUnit} loads spoiled (${perishChance.total}% ≤ 25%)`
+                    loadsLost: lostThisUnit
                 });
             } else {
                 details.push({
                     unit: unit + 1,
                     roll: perishChance.total,
                     spoiled: false,
-                    loadsLost: 0,
-                    note: `Unit ${unit + 1}: no spoilage (${perishChance.total}% > 25%)`
+                    loadsLost: 0
                 });
             }
         }
@@ -147,14 +140,14 @@ export class CargoPerishability {
     }
 
     /**
-     * Build descriptive note for log
+     * Build descriptive note for log - only called when spoilage occurs
      */
     static buildPerishabilityNote(distance, threshold, category, excessUnits, spoilageResults) {
-        const spoilageText = spoilageResults.details.map(d => d.note).join('; ');
+        const spoiledUnits = spoilageResults.details.filter(d => d.spoiled);
+        const spoiledText = spoiledUnits.map(d => `${d.loadsLost} loads`).join(', ');
         
-        return `Cargo perishability check: ${distance} mi > ${threshold} mi ${category} threshold ` +
-               `(+${excessUnits} excess unit${excessUnits !== 1 ? 's' : ''}). ` +
-               `${spoilageText}. Total lost: ${spoilageResults.totalLost} loads`;
+        return `Voyage exceeded ${category} cargo threshold (${distance} mi > ${threshold} mi). ` +
+               `${spoilageResults.totalLost} loads of cargo spoiled (${spoiledText}).`;
     }
 
     /**
@@ -169,14 +162,17 @@ export class CargoPerishability {
 
     /**
      * Apply perishability to cargo before sale
+     * @param {Object} distanceRollInfo - From CargoSelling._lastDistanceRoll
+     * @param {number} currentLoads - Current cargo loads
+     * @param {Object} logRef - Reference to voyage log HTML
+     * @param {string} portName - Name of port for logging
      */
-    static async applyPerishability(cargoType, distanceTraveled, currentLoads, logRef, portName) {
-        const result = await this.checkPerishability(cargoType, distanceTraveled, currentLoads);
+    static async applyPerishability(distanceRollInfo, currentLoads, logRef, portName) {
+        const result = await this.checkPerishability(distanceRollInfo, currentLoads);
         
-        if (result.loadsLost > 0) {
+        if (result.spoiled && result.loadsLost > 0) {
             logRef.value += `<p><strong>⚠️ Cargo Spoilage at ${portName}:</strong> ${result.perishabilityNote}</p>`;
             
-            // If all cargo spoiled
             if (result.loadsRemaining === 0) {
                 logRef.value += `<p><strong>❌ Total Cargo Loss:</strong> All cargo has perished. Nothing to sell.</p>`;
                 return {
@@ -193,14 +189,14 @@ export class CargoPerishability {
                 loadsLost: result.loadsLost,
                 note: result.perishabilityNote
             };
-        } else {
-            logRef.value += `<p><strong>✓ Cargo Condition at ${portName}:</strong> ${result.perishabilityNote}</p>`;
-            return {
-                success: true,
-                loadsRemaining: currentLoads,
-                loadsLost: 0,
-                note: result.perishabilityNote
-            };
         }
+        
+        // No spoilage - don't log anything
+        return {
+            success: true,
+            loadsRemaining: currentLoads,
+            loadsLost: 0,
+            note: null
+        };
     }
 }

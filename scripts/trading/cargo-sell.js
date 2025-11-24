@@ -6,6 +6,7 @@
 import { CargoRegistry } from '../data/cargo.js';
 import { PortRegistry } from '../data/ports.js';
 import { ProficiencySystem } from './proficiency.js';
+import { CargoPerishability } from './perishability.js';
 
 /**
  * Calculate transport fee for consignment cargo
@@ -122,8 +123,8 @@ export class CargoSelling {
             voyageLogHtmlRef.value += `<p><strong>Customs Tax:</strong> ${finalTaxPercent}% of ${cargoValue} gp = ${finalTaxAmount} gp.</p>`;
         }
 
-        // Calculate sale price with all modifiers
-        const saleResult = await this.calculateSalePrice(
+        // Calculate sale price with all modifiers (includes distance roll)
+        let saleResult = await this.calculateSalePrice(
             currentCargoType,
             currentLoads,
             portSize,
@@ -135,6 +136,42 @@ export class CargoSelling {
             voyageLogHtmlRef
         );
 
+        // Check perishability using the same distance roll from sale calculation
+        let actualLoads = currentLoads;
+        let actualPurchaseCost = currentPurchaseCost;
+        
+        if (saleResult.distanceRollInfo) {
+            const perishResult = await CargoPerishability.applyPerishability(
+                saleResult.distanceRollInfo,
+                currentLoads,
+                voyageLogHtmlRef,
+                portName
+            );
+            
+            if (!perishResult.success || perishResult.loadsRemaining === 0) {
+                // All cargo spoiled - return early
+                return {
+                    newTreasury: currentTreasury,
+                    newCrewEarningsFromTrade: crewEarningsFromTrade,
+                    taxAmount: 0,
+                    totalSaleValueForOwner: 0,
+                    spoiledAll: true
+                };
+            }
+            
+            if (perishResult.loadsLost > 0) {
+                // Some cargo spoiled - recalculate sale value with remaining loads
+                actualLoads = perishResult.loadsRemaining;
+                actualPurchaseCost = Math.floor(currentPurchaseCost * (actualLoads / currentLoads));
+                
+                // Recalculate total sale value with remaining loads
+                saleResult = {
+                    ...saleResult,
+                    totalSaleValue: saleResult.pricePerLoad * actualLoads
+                };
+            }
+        }
+
         // Handle profit distribution based on trade mode
         let totalSaleValueForOwner = 0;
         let totalSaleValueToConsignor = 0;
@@ -145,7 +182,9 @@ export class CargoSelling {
             // Rules: "A ship owner engages in speculation typically takes 50% of the profits, 
             // with the remainder split in shares amongst the captain and crew."
             
-            const cargoGrossProfit = saleResult.totalSaleValue - currentPurchaseCost;
+            const cargoGrossProfit = saleResult.totalSaleValue - actualPurchaseCost;
+            
+            voyageLogHtmlRef.value += `<p><strong>Cargo Sale:</strong> ${actualLoads} loads @ ${saleResult.pricePerLoad} gp/load = ${saleResult.totalSaleValue} gp gross.</p>`;
             
             if (cargoGrossProfit > 0) {
                 // Owner gets 50% of profit, crew gets 50% of profit
@@ -153,11 +192,15 @@ export class CargoSelling {
                 crewDirectTradeEarnings = Math.floor(cargoGrossProfit * 0.50);
                 
                 // Owner receives: original investment + their share of profit
-                totalSaleValueForOwner = currentPurchaseCost + ownerProfitShare;
+                totalSaleValueForOwner = actualPurchaseCost + ownerProfitShare;
+                
+                voyageLogHtmlRef.value += `<p><strong>Speculation Profit:</strong> Gross profit ${cargoGrossProfit} gp. Owner receives ${totalSaleValueForOwner} gp (cost recovery + 50% profit). Crew earns ${crewDirectTradeEarnings} gp (50% profit).</p>`;
             } else {
                 // Loss or break-even - owner gets sale value, crew gets nothing
                 crewDirectTradeEarnings = 0;
                 totalSaleValueForOwner = saleResult.totalSaleValue;
+                
+                voyageLogHtmlRef.value += `<p><strong>Speculation Loss:</strong> Purchased for ${actualPurchaseCost} gp, sold for ${saleResult.totalSaleValue} gp. Loss: ${Math.abs(cargoGrossProfit)} gp. Owner receives ${totalSaleValueForOwner} gp.</p>`;
             }
             
             newTreasury += totalSaleValueForOwner;
@@ -193,6 +236,11 @@ export class CargoSelling {
         if (finalTaxAmount > 0) {
             newTreasury -= finalTaxAmount;
         }
+
+        // Log final treasury change summary
+        const treasuryChange = newTreasury - currentTreasury;
+        const changeSign = treasuryChange >= 0 ? '+' : '';
+        voyageLogHtmlRef.value += `<p><strong>Treasury Update:</strong> ${currentTreasury} gp → ${newTreasury} gp (${changeSign}${treasuryChange} gp from this sale)</p>`;
 
         return {
             loadsSold: currentLoads,
@@ -249,13 +297,41 @@ export class CargoSelling {
             }
         }
 
-        // Distance modifier (CORRECTED - uses d6 roll, not actual distance)
+        // Distance modifier (d6 roll determines both price modifier AND perishability threshold)
+        // Per rules: Short (1-2, <80mi, -1), Medium (3-5, ≤250mi, 0), Long (6, ≤500mi, +2), Extraordinary (>500mi, +4)
         const distRoll = new Roll("1d6");
         await distRoll.evaluate();
+        
         let distanceMod = 0;
-        if (distRoll.total <= 2) distanceMod = -1;
-        else if (distRoll.total <= 5) distanceMod = 0;
-        else distanceMod = +2;
+        let distanceCategory = "Medium";
+        let distanceThreshold = 250;
+        
+        // Check for Extraordinary first (actual distance > 500 miles overrides roll)
+        if (distance > 500) {
+            distanceMod = +4;
+            distanceCategory = "Extraordinary";
+            distanceThreshold = 500; // Still use 500 as threshold for perishability
+        } else if (distRoll.total <= 2) {
+            distanceMod = -1;
+            distanceCategory = "Short";
+            distanceThreshold = 80;
+        } else if (distRoll.total <= 5) {
+            distanceMod = 0;
+            distanceCategory = "Medium";
+            distanceThreshold = 250;
+        } else {
+            distanceMod = +2;
+            distanceCategory = "Long";
+            distanceThreshold = 500;
+        }
+        
+        // Store for perishability check
+        this._lastDistanceRoll = {
+            roll: distRoll.total,
+            category: distanceCategory,
+            threshold: distanceThreshold,
+            actualDistance: distance
+        };
 
         // Bargaining and Appraisal for selling (CORRECTED - uses success margin)
         let sellBargAdj = 0, sellAppAdj = 0;
@@ -291,7 +367,11 @@ export class CargoSelling {
         const pricePerLoad = Math.max(1, Math.floor(baseValue * saPercent / 100));
         const totalValue = pricePerLoad * loads;
 
-        return { pricePerLoad, totalSaleValue: totalValue };
+        return { 
+            pricePerLoad, 
+            totalSaleValue: totalValue,
+            distanceRollInfo: this._lastDistanceRoll // Include for perishability check
+        };
     }
 
     static getDemandModifier(roll) {

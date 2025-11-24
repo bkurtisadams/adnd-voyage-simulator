@@ -10,7 +10,6 @@ import { CargoRegistry } from '../data/cargo.js';
 import { ProficiencySystem } from '../trading/proficiency.js';
 import { CargoPurchasing } from '../trading/cargo-buy.js';
 import { CargoSelling } from '../trading/cargo-sell.js';
-import { CargoPerishability } from '../trading/perishability.js';
 import { CargoOperations } from '../trading/cargo-operations.js';
 import { ReportGenerator } from '../journal/report-generator.js';
 
@@ -274,10 +273,12 @@ export class VoyageSimulator {
           consecutiveRowingDays: 0,
           position: { routeSegment: 0, milesOnSegment: 0 }, 
           weatherSeed: null,
+          currentWaterType: "SHALLOW", // FRESH, COASTAL, SHALLOW, or DEEP - for encounter checks
           
           // Logs
           voyageLogHtml: { value: "" },
           weatherLogHtml: { value: "" },
+          events: [], // Structured event log for encounters, damage, etc.
           portsVisited: [],
           portActivities: [],
           repairLog: [],
@@ -536,7 +537,20 @@ export class VoyageSimulator {
                   damage = await NavigationSystem.calculateHazardDamage(hazard.hazardType, pilotCheck.missedBy);
                   state.ship.hullPoints.value -= damage;
                   state.totalHullDamage += damage;
-                  state.voyageLogHtml.value += `<p><strong>⚠️ ${hazard.description}!</strong> Piloting check failed by ${pilotCheck.missedBy}. Hull damage: ${damage} HP. (${state.ship.hullPoints.value}/${state.ship.hullPoints.max} remaining)</p>`;
+                  state.voyageLogHtml.value += `<p><strong>⚠️ ${hazard.description} (${dateStr})!</strong> Piloting check failed by ${pilotCheck.missedBy}. Hull damage: ${damage} HP. (${state.ship.hullPoints.value}/${state.ship.hullPoints.max} remaining)</p>`;
+                  
+                  // Log weather damage event
+                  state.events.push({
+                      type: 'damage',
+                      date: dateStr,
+                      source: 'weather',
+                      sourceName: hazard.description,
+                      hazardType: hazard.hazardType,
+                      pilotCheckMissedBy: pilotCheck.missedBy,
+                      hullDamage: damage,
+                      hullRemaining: state.ship.hullPoints.value
+                  });
+                  
                   if (state.ship.hullPoints.value <= 0) shipSank = true;
               }
           }
@@ -545,19 +559,75 @@ export class VoyageSimulator {
       const weatherLog = this.formatWeatherLog(dateStr, parsedWeather, speedInfo, destinationName);
       state.weatherLogHtml.value += weatherLog;
       
-      const { EncounterSystem } = await import('./encounters.js');
-      const encounter = await EncounterSystem.rollForEncounter("dawn");
+      // Process daily encounters based on water type
+      // Default to SHALLOW (coastal) - could be set per route segment
+      const { EncounterSystem } = await import('./encounter-system.js');
+      const waterType = state.currentWaterType || "SHALLOW";
+      console.log(`Voyage Simulator | Processing encounters for water type: ${waterType}`);
+      const encounters = await EncounterSystem.processDailyEncounters(waterType);
+      console.log(`Voyage Simulator | Encounters rolled: ${encounters.length}`);
       
-      if (encounter) {
+      for (const encounter of encounters) {
           const encounterText = EncounterSystem.generateEncounterText(encounter);
-          state.voyageLogHtml.value += `<p><strong>🎲 Encounter:</strong> ${encounterText}</p>`;
-          const encounterDamage = await EncounterSystem.calculateEncounterDamage(encounter.encounter, encounter.classification);
-          if (encounterDamage > 0) {
-              state.ship.hullPoints.value -= encounterDamage;
-              state.totalHullDamage += encounterDamage;
-              damage += encounterDamage;
-              state.voyageLogHtml.value += `<p>Encounter damage: ${encounterDamage} HP. (${state.ship.hullPoints.value}/${state.ship.hullPoints.max} remaining)</p>`;
-              if (state.ship.hullPoints.value <= 0) shipSank = true;
+          console.log(`Voyage Simulator | Encounter: ${encounterText}`);
+          state.voyageLogHtml.value += `<p><strong>🎲 Encounter (${dateStr}):</strong> ${encounterText}</p>`;
+          
+          // Add to structured events log
+          state.events.push({
+              type: 'encounter',
+              date: dateStr,
+              waterType,
+              encounter: encounter.encounter.name,
+              classification: encounter.classification,
+              timeOfDay: encounter.timeOfDay,
+              numberAppearing: encounter.numberAppearing?.count || 1,
+              distance: encounter.distance,
+              surprise: encounter.surprise?.shipSurprised || false
+          });
+          
+          const encounterDamage = await EncounterSystem.calculateEncounterDamage(
+              encounter.encounter, 
+              encounter.classification,
+              encounter.numberAppearing?.count || 1
+          );
+          
+          if (encounterDamage.hullDamage > 0) {
+              state.ship.hullPoints.value -= encounterDamage.hullDamage;
+              state.totalHullDamage += encounterDamage.hullDamage;
+              damage += encounterDamage.hullDamage;
+              state.voyageLogHtml.value += `<p>Hull damage: ${encounterDamage.hullDamage} HP. (${state.ship.hullPoints.value}/${state.ship.hullPoints.max} remaining)</p>`;
+              
+              // Log damage event
+              state.events.push({
+                  type: 'damage',
+                  date: dateStr,
+                  source: 'encounter',
+                  sourceName: encounter.encounter.name,
+                  hullDamage: encounterDamage.hullDamage,
+                  hullRemaining: state.ship.hullPoints.value
+              });
+          }
+          
+          if (encounterDamage.crewLoss > 0) {
+              state.voyageLogHtml.value += `<p>⚠️ Crew casualties: ${encounterDamage.crewLoss} lost!</p>`;
+              
+              // Log crew loss event
+              state.events.push({
+                  type: 'crew_loss',
+                  date: dateStr,
+                  source: 'encounter',
+                  sourceName: encounter.encounter.name,
+                  crewLost: encounterDamage.crewLoss
+              });
+          }
+          
+          if (encounterDamage.notes) {
+              state.voyageLogHtml.value += `<p><em>${encounterDamage.notes}</em></p>`;
+          }
+          
+          if (state.ship.hullPoints.value <= 0) {
+              shipSank = true;
+              break;
           }
       }
       
@@ -735,20 +805,7 @@ export class VoyageSimulator {
   }
 
   async attemptCargoSale(state, portId, portActivity, distanceTraveled) {
-      const perishResult = await CargoPerishability.applyPerishability(
-          state.currentCargo.type,
-          distanceTraveled,
-          state.currentCargo.loads,
-          state.voyageLogHtml,
-          PortRegistry.get(portId).name
-      );
-      
-      if (!perishResult.success || perishResult.loadsRemaining === 0) {
-          state.currentCargo = { type: null, loads: 0, purchasePrice: 0 };
-          return;
-      }
-      state.currentCargo.loads = perishResult.loadsRemaining;
-      
+      // Perishability is now checked inside handleCargoSale after the distance roll
       const result = await CargoSelling.handleCargoSale({
           portId: portId,
           currentTreasury: state.treasury,
@@ -766,6 +823,12 @@ export class VoyageSimulator {
           crewQualityMod: state.crewQualityMod,
           crewEarningsFromTrade: state.crewEarningsFromTrade
       });
+      
+      // Handle case where all cargo spoiled
+      if (result.spoiledAll) {
+          state.currentCargo = { type: null, loads: 0, purchasePrice: 0 };
+          return;
+      }
       
       state.treasury = result.newTreasury;
       state.crewEarningsFromTrade = result.newCrewEarningsFromTrade;
