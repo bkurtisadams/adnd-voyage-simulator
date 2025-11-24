@@ -187,7 +187,33 @@ export class VoyageSimulator {
       const lieutenantSkills = config.lieutenant?.skills ?? {};
       const crewQualityMod = ProficiencySystem.getCrewQualityModifier(config.crewQuality);
 
+      // --- EXPENSE CALCULATION (Oops, I'm at Sea, p.14, 42) ---
+      // Wages (monthly): Sailor 2gp, Oarsman 5gp, Marine 3gp, Capt 100gp/lvl, Lt 100gp/lvl
+      // For simplicity, assume Capt/Lt are level 5 and 3 respectively if not specified.
+      let monthlyWage = 0;
+      if (ship.crew) {
+          ship.crew.forEach(group => {
+              let wage = 2; // Default sailor
+              if (group.role === 'oarsman') wage = 5;
+              if (group.role === 'marine') wage = 3;
+              if (group.role === 'mate') wage = 10; // Estimate for Mate
+              monthlyWage += (group.count * wage);
+          });
+      }
+      // Officers (Base cost, assuming hired NPC rates)
+      monthlyWage += 500; // Captain
+      monthlyWage += 300; // Lieutenant
+
+      // Food: 7gp per week per 5 crew => ~0.2gp per person per day
+      const totalCrewCount = (ship.crew || []).reduce((a, b) => a + b.count, 0) + 2; // + officers
+      const dailyFoodCost = Math.ceil((totalCrewCount / 5) * 1); // Roughly 1gp per 5 crew per day (7gp/week)
+
+      const dailyWageCost = Math.ceil(monthlyWage / 30);
+
       return {
+          id: config.voyageId || foundry.utils.randomID(), // Ensure ID exists
+          mode: config.mode || 'auto',
+          
           // Ship & Route
           ship: ship,
           route: route,
@@ -213,6 +239,13 @@ export class VoyageSimulator {
           crewEarningsFromTrade: 0,
           revenueTotal: 0,
           expenseTotal: 0,
+          dailyOperationalCost: dailyWageCost + dailyFoodCost, // Store for daily deduction
+          breakdown: {
+              wages: 0,
+              food: 0,
+              repairs: 0,
+              fees: 0
+          },
           
           // Cargo state
           currentCargo: {
@@ -590,6 +623,23 @@ export class VoyageSimulator {
       // Log weather
       const weatherLog = this.formatWeatherLog(dateStr, parsedWeather, speedInfo, destinationName);
       state.weatherLogHtml.value += weatherLog;
+
+      // --- DEDUCT DAILY EXPENSES ---
+      // Wages and Food are continuous costs
+      if (state.dailyOperationalCost) {
+          state.expenseTotal += state.dailyOperationalCost;
+          state.treasury -= state.dailyOperationalCost;
+          
+          // Track specifics if breakdown exists
+          if (state.breakdown) {
+              // Split roughly based on the initialization ratio
+              // This is an estimation for the report
+              const foodRatio = 0.4; // approximated
+              const dailyFood = Math.floor(state.dailyOperationalCost * foodRatio);
+              state.breakdown.food += dailyFood;
+              state.breakdown.wages += (state.dailyOperationalCost - dailyFood);
+          }
+      }
       
       // Check for encounters
       const { EncounterSystem } = await import('./encounters.js');

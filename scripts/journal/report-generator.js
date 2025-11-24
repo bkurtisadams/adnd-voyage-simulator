@@ -137,6 +137,32 @@ export class ReportGenerator {
             </div>
         </div>
 
+        <h2 class="section-header">Operational Expense Breakdown</h2>
+            <div class="info-box">
+                <table style="width:100%; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 4px;"><strong>Crew Wages:</strong></td>
+                        <td style="text-align: right;">${state.breakdown?.wages || 0} gp</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 4px;"><strong>Provisions (Food/Water):</strong></td>
+                        <td style="text-align: right;">${state.breakdown?.food || 0} gp</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 4px;"><strong>Port Fees & Pilotage:</strong></td>
+                        <td style="text-align: right;">${state.breakdown?.fees || expenseTotal - (state.breakdown?.wages || 0) - (state.breakdown?.food || 0) - (state.breakdown?.repairs || 0)} gp</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 4px;"><strong>Repairs & Maintenance:</strong></td>
+                        <td style="text-align: right;">${state.breakdown?.repairs || 0} gp</td>
+                    </tr>
+                    <tr style="border-top: 1px solid #8b4513;">
+                        <td style="padding: 4px;"><strong>TOTAL:</strong></td>
+                        <td style="text-align: right;"><strong>${expenseTotal} gp</strong></td>
+                    </tr>
+                </table>
+            </div>
+
         <h2 class="section-header">Division of Profits</h2>
 
         <div class="log-entry">

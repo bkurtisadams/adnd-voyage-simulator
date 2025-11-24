@@ -9,6 +9,15 @@
     <!-- ============ VOYAGE DETAILS ============ -->
     <div class="tab" data-tab="voyage-details">
       <div class="form-group">
+        <label for="mode">Simulation Mode:</label>
+        <select id="mode" name="mode">
+          <option value="auto" {{selected saved.mode "auto"}}>Automated (Instant Result)</option>
+          <option value="manual" {{selected saved.mode "manual"}}>Manual (Day-by-Day)</option>
+        </select>
+        <p class="notes" style="font-size: 0.8em; color: #666;">Manual mode prepares the voyage state but requires you to advance days manually using the macro.</p>
+      </div>
+
+      <div class="form-group">
         <label for="shipID">Select Ship:</label>
         <select id="shipID" name="shipID" required>
           <option value="">-- Choose Ship --</option>
@@ -17,7 +26,8 @@
           {{/each}}
         </select>
       </div>
-
+      
+      <!-- ... Rest of Voyage Details ... -->
       <div class="form-group">
         <label for="routeID">Select Trade Route:</label>
         <select id="routeID" name="routeID" required>
@@ -119,7 +129,12 @@
 
     <!-- ============ CAPTAIN ============ -->
     <div class="tab" data-tab="captain-info">
-      <h2>Captain</h2>
+      <div class="flexrow" style="align-items: center; justify-content: space-between; margin-bottom: 10px;">
+        <h2>Captain</h2>
+        <button type="button" class="randomize-crew dialog-button" data-type="captain">
+          <i class="fas fa-dice"></i> Randomize
+        </button>
+      </div>
 
       <div class="form-group">
         <label for="captainName">Name</label>
@@ -158,7 +173,12 @@
 
     <!-- ============ LIEUTENANT ============ -->
     <div class="tab" data-tab="lieutenant-info">
-      <h2>Lieutenant</h2>
+      <div class="flexrow" style="align-items: center; justify-content: space-between; margin-bottom: 10px;">
+        <h2>Lieutenant</h2>
+        <button type="button" class="randomize-crew dialog-button" data-type="lieutenant">
+          <i class="fas fa-dice"></i> Randomize
+        </button>
+      </div>
 
       <div class="form-group">
         <label for="lieutenantName">Name</label>
@@ -188,7 +208,7 @@
         <label><input type="checkbox" id="ltSkillPiloting"            name="ltSkillPiloting"            {{checked saved.ltSkillPiloting}}>            Piloting</label>
         <label><input type="checkbox" id="ltSkillSeaLore"             name="ltSkillSeaLore"             {{checked saved.ltSkillSeaLore}}>             Sea Lore</label>
         <label><input type="checkbox" id="ltSkillShipRowing"          name="ltSkillShipRowing"          {{checked saved.ltSkillShipRowing}}>          Ship Rowing</label>
-        <label><input type="checkbox" id="ltSkillShipSailing"         name="ltSkillShipSailing"         {{checked saved.ltSkillShipSailing}}>         Ship Sailing</label>
+        <label><input type="checkbox" id="ltSkillShipSailing"         name="ltSkillShipSailing"         {{checked saved.ltSkillSailing}}>         Ship Sailing</label>
         <label><input type="checkbox" id="ltSkillShipwright"          name="ltSkillShipwright"          {{checked saved.ltSkillShipwright}}>          Shipwright</label>
         <label><input type="checkbox" id="ltSkillSignaling"           name="ltSkillSignaling"           {{checked saved.ltSkillSignaling}}>           Signaling</label>
         <label><input type="checkbox" id="ltSkillVesselIdentification" name="ltSkillVesselIdentification" {{checked saved.ltSkillVesselIdentification}}> Vessel Identification</label>

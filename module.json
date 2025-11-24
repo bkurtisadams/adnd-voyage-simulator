@@ -15,7 +15,8 @@
     }
   ],
   "esmodules": [
-    "scripts/main.js"
+    "scripts/main.js",
+    "scripts/data/crew-generator.js"
   ],
   "styles": [
     "styles/voyage-simulator.css"

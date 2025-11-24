@@ -7,6 +7,7 @@ import { ShipRegistry } from '../data/ships.js';
 import { PortRegistry } from '../data/ports.js';
 import { RouteRegistry } from '../data/routes.js';
 import { VoyageSimulator } from '../voyage/simulation.js';
+import { CrewGenerator } from '../data/crew-generator.js'; // Ensure this path matches your folder structure
 
 export class VoyageSetupDialog extends FormApplication {
 
@@ -21,7 +22,7 @@ export class VoyageSetupDialog extends FormApplication {
             classes: ["adnd-voyage-simulator", "sheet"],
             title: "AD&D Voyage Simulator - Setup",
             template: "modules/adnd-voyage-simulator/templates/voyage-setup.hbs",
-            width: 700,
+            width: 720,
             height: "auto",
             tabs: [
                 { navSelector: ".tabs", contentSelector: ".sheet-body", initial: "voyage-details" }
@@ -73,6 +74,7 @@ export class VoyageSetupDialog extends FormApplication {
         data.saved = this.savedData;
         data.saved.startingGold = data.saved.startingGold || 1000;
         data.saved.tradeMode = data.saved.tradeMode || "speculation";
+        data.saved.mode = data.saved.mode || "auto"; // Default to automated
         data.saved.commissionRate = data.saved.commissionRate || 25;
         data.saved.latitude = data.saved.latitude || 40;
         data.saved.longitude = data.saved.longitude || 0;
@@ -102,6 +104,46 @@ export class VoyageSetupDialog extends FormApplication {
         html.find('input[name="tradeMode"]').change(this._onTradeModeChange.bind(this));
         html.find('#automateTrading').change(this._onAutomateToggle.bind(this));
         html.find('button[type="submit"]').click(this._onSubmit.bind(this));
+        
+        // Random Generator Listeners
+        html.find('.randomize-crew').click(this._onRandomizeCrew.bind(this));
+    }
+
+    _onRandomizeCrew(event) {
+        event.preventDefault();
+        const type = event.currentTarget.dataset.type; // 'captain' or 'lieutenant'
+        const rank = type === 'captain' ? 'Captain' : 'Lieutenant';
+        const prefix = type === 'captain' ? '' : 'lt'; // Prefix for ID selectors
+
+        // Generate data
+        const generated = CrewGenerator.generate(rank);
+
+        // Populate Name
+        const nameField = type === 'captain' ? '#captainName' : '#lieutenantName';
+        this.element.find(nameField).val(generated.name);
+
+        // Populate Attributes
+        const attrPrefix = type === 'captain' ? '#' : '#lt';
+        this.element.find(`${attrPrefix}str`).val(generated.str);
+        this.element.find(`${attrPrefix}dex`).val(generated.dex);
+        this.element.find(`${attrPrefix}con`).val(generated.con);
+        this.element.find(`${attrPrefix}int`).val(generated.int);
+        this.element.find(`${attrPrefix}wis`).val(generated.wis);
+        this.element.find(`${attrPrefix}cha`).val(generated.cha);
+
+        // Populate Skills
+        // First clear all checkboxes for this tab
+        const skillPrefix = type === 'captain' ? '#skill' : '#ltSkill';
+        this.element.find(`input[id^="${skillPrefix.replace('#', '')}"]`).prop('checked', false);
+
+        // Check generated skills
+        for (const [skill, hasSkill] of Object.entries(generated.skills)) {
+            if (hasSkill) {
+                // Capitalize first letter for ID matching (e.g. skillBargaining)
+                const skillId = skill.charAt(0).toUpperCase() + skill.slice(1);
+                this.element.find(`${skillPrefix}${skillId}`).prop('checked', true);
+            }
+        }
     }
 
     _onTradeModeChange(event) {
@@ -148,6 +190,14 @@ export class VoyageSetupDialog extends FormApplication {
         this.close();
 
         const simulator = new VoyageSimulator();
+        
+        // Check mode and alert user
+        if (voyageConfig.mode === 'manual') {
+            ui.notifications.info("Initializing Manual Voyage. Use the macro or sidebar to advance days.");
+        } else {
+            ui.notifications.info("Starting Automated Voyage Simulation...");
+        }
+
         await simulator.startVoyage(voyageConfig);
     }
 
@@ -155,10 +205,13 @@ export class VoyageSetupDialog extends FormApplication {
         const html = this.element;
 
         return {
+            // Core
             shipID: html.find('#shipID').val(),
             routeID: html.find('#routeID').val(),
-            captainName: html.find('#captainName').val(),
+            mode: html.find('#mode').val(), // New Mode Selection
             
+            // Captain
+            captainName: html.find('#captainName').val(),
             str: parseInt(html.find('#str').val()),
             dex: parseInt(html.find('#dex').val()),
             con: parseInt(html.find('#con').val()),
@@ -182,6 +235,7 @@ export class VoyageSetupDialog extends FormApplication {
             skillSignaling: html.find('#skillSignaling').is(':checked'),
             skillVesselIdentification: html.find('#skillVesselIdentification').is(':checked'),
             
+            // Lieutenant
             ltName: html.find('#lieutenantName').val(),
             ltStr: parseInt(html.find('#ltStr').val()),
             ltDex: parseInt(html.find('#ltDex').val()),
@@ -206,6 +260,7 @@ export class VoyageSetupDialog extends FormApplication {
             ltSkillSignaling: html.find('#ltSkillSignaling').is(':checked'),
             ltSkillVesselIdentification: html.find('#ltSkillVesselIdentification').is(':checked'),
             
+            // Voyage Settings
             startingGold: parseInt(html.find('#startingGold').val()),
             tradeMode: html.find('input[name="tradeMode"]:checked').val(),
             commissionRate: parseInt(html.find('#commissionRate').val()),
@@ -253,6 +308,7 @@ export class VoyageSetupDialog extends FormApplication {
         return {
             shipId: formData.shipID,
             routeId: formData.routeID,
+            mode: formData.mode, // Pass mode to config
             captain: {
                 name: formData.captainName,
                 strScore: formData.str,
