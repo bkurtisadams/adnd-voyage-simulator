@@ -392,7 +392,7 @@ export class VoyageSimulator {
       this.recordLedgerEntry(state, this.getCurrentDate(), `Port fees at ${originName}`, 0, portFees.total);
       if (state.breakdown) state.breakdown.fees += portFees.total;
       
-      state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp (Entrance: ${portFees.entrance} gp, Moorage: ${portFees.moorage.cost} gp, Pilot: ${portFees.pilot} gp)</p>`;
+      state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp (Entrance: ${portFees.entrance} gp, Moorage: ${portFees.moorage.cost} gp [${portFees.moorage.type}], Pilot: ${portFees.pilot} gp)</p>`;
       state.portActivities.push(portActivity);
       
       if (state.tradeMode === "consignment") {
@@ -409,28 +409,41 @@ export class VoyageSimulator {
       
       const pilot = state.ship.hullPoints.max;
       
-      // ECONOMY TWEAK: Prefer Anchor (5gp) over Berth (1gp/HP) to save money
-      // Only take a berth if the ship needs repairs (>10% damage) or it's very cheap
-      const needsRepair = (state.ship.hullPoints.max - state.ship.hullPoints.value) > (state.ship.hullPoints.max * 0.1);
-      const berthIsCheap = state.ship.hullPoints.max <= 5; // Very small boats
+      // Determine moorage: Default to Anchor (5 gp/day) unless specific need for Berth
+      // Berth costs 1 gp/hull point/day - much more expensive for larger ships
+      // Rules: "Ships that cannot find (or do not desire) a berth may anchor"
       
+      const damagePercent = ((state.ship.hullPoints.max - state.ship.hullPoints.value) / state.ship.hullPoints.max) * 100;
+      const needsRepair = damagePercent > 10;
+      const berthIsCheap = state.ship.hullPoints.max <= 5; // Very small boats - berth is ≤5 gp/day
+      
+      // Check berth availability (80% chance per rules)
       const berthAvailableRoll = new Roll("1d100");
       await berthAvailableRoll.evaluate();
       const berthAvailable = berthAvailableRoll.total <= 80;
 
-      let moorageCost, moorageType;
-      if (berthAvailable && (needsRepair || berthIsCheap)) {
+      let moorageCost, moorageType, moorageReason;
+      
+      // Only take berth if: available AND (needs repair OR berth is cheaper/same as anchor)
+      if (berthAvailable && needsRepair) {
           moorageCost = state.ship.hullPoints.max * daysInPort;
           moorageType = "berth";
+          moorageReason = `for repairs (${Math.round(damagePercent)}% damage)`;
+      } else if (berthAvailable && berthIsCheap) {
+          moorageCost = state.ship.hullPoints.max * daysInPort;
+          moorageType = "berth";
+          moorageReason = `(small vessel, berth ≤ anchor cost)`;
       } else {
+          // Default: anchor is cheaper
           moorageCost = 5 * daysInPort;
           moorageType = "anchor";
+          moorageReason = berthAvailable ? "(berth available but anchor cheaper)" : "(no berth available)";
       }
       
       return {
           entrance: entrance,
           pilot: pilot,
-          moorage: { cost: moorageCost, type: moorageType, days: daysInPort },
+          moorage: { cost: moorageCost, type: moorageType, days: daysInPort, reason: moorageReason },
           total: entrance + pilot + moorageCost
       };
   }
@@ -705,7 +718,7 @@ export class VoyageSimulator {
       if (state.breakdown) state.breakdown.fees += portFees.total;
       
       state.voyageLogHtml.value += `<h3>Arrived at ${portName}</h3>`;
-      state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp</p>`;
+      state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp (Entrance: ${portFees.entrance} gp, Moorage: ${portFees.moorage.cost} gp [${portFees.moorage.type}], Pilot: ${portFees.pilot} gp)</p>`;
       
       // 4. Simulate Days in Port (Weather & Costs)
       for (let i = 0; i < daysInPort; i++) {
