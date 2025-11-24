@@ -281,21 +281,27 @@ export class CargoSelling {
     }
 
     static async calculateSalePrice(cargoType, loads, portSize, portSizeMod, distance, profScores, ltSkills, crewQualityMod, logRef) {
-        // Demand modifier
+        // Demand modifier: 3d6 roll, modified +4 by successful Trade proficiency
         const dmRoll = new Roll("3d6");
         await dmRoll.evaluate();
-        let demandMod = this.getDemandModifier(dmRoll.total);
-        demandMod += portSizeMod;
-
-        // Trade proficiency affects demand
+        
+        let demandRollModified = dmRoll.total;
+        let tradeNote = "";
+        
+        // Trade proficiency modifies the demand ROLL by +4 (per rules)
         if (profScores.trade !== null) {
             const tradeCheck = await ProficiencySystem.makeProficiencyCheck("trade", profScores, ltSkills, crewQualityMod, 0);
             if (tradeCheck.success) {
-                demandMod += 2;
+                demandRollModified += 4;
+                tradeNote = " (Trade +4)";
             } else if (tradeCheck.roll % 2 === 1) {
-                demandMod -= 2;
+                demandRollModified -= 4; // Inverse on odd failure
+                tradeNote = " (Trade -4, odd fail)";
             }
         }
+        
+        let demandMod = this.getDemandModifier(demandRollModified);
+        demandMod += portSizeMod;
 
         // Distance modifier (d6 roll determines both price modifier AND perishability threshold)
         // Per rules: Short (1-2, <80mi, -1), Medium (3-5, ≤250mi, 0), Long (6, ≤500mi, +2), Extraordinary (>500mi, +4)
@@ -310,7 +316,7 @@ export class CargoSelling {
         if (distance > 500) {
             distanceMod = +4;
             distanceCategory = "Extraordinary";
-            distanceThreshold = 500; // Still use 500 as threshold for perishability
+            distanceThreshold = 500;
         } else if (distRoll.total <= 2) {
             distanceMod = -1;
             distanceCategory = "Short";
@@ -333,44 +339,60 @@ export class CargoSelling {
             actualDistance: distance
         };
 
-        // Bargaining and Appraisal for selling (CORRECTED - uses success margin)
+        // Bargaining and Appraisal: +1 to SA roll for success, -1 for odd failure (per rules)
+        // The margin-based 5% bonus applies to FINAL price, not SA roll
         let sellBargAdj = 0, sellAppAdj = 0;
+        let bargainMargin = 0, appraisalMargin = 0;
 
         if (profScores.bargaining !== null) {
             const check = await ProficiencySystem.makeProficiencyCheck("bargaining", profScores, ltSkills, crewQualityMod, 0);
-            const margin = check.success ? 
-                Math.clamp(check.needed - check.roll, 0, 5) : 
-                -Math.clamp(check.roll - check.needed, 0, 5);
-            sellBargAdj = margin;
+            if (check.success) {
+                sellBargAdj = +1;
+                bargainMargin = Math.min(5, check.needed - check.roll); // For final price bonus
+            } else if (check.roll % 2 === 1) {
+                sellBargAdj = -1; // Inverse on odd failure
+            }
         }
 
         if (profScores.appraisal !== null) {
             const check = await ProficiencySystem.makeProficiencyCheck("appraisal", profScores, ltSkills, crewQualityMod, 0);
-            const margin = check.success ? 
-                Math.clamp(check.needed - check.roll, 0, 5) : 
-                -Math.clamp(check.roll - check.needed, 0, 5);
-            sellAppAdj = margin;
+            if (check.success) {
+                sellAppAdj = +1;
+                appraisalMargin = Math.min(5, check.needed - check.roll);
+            } else if (check.roll % 2 === 1) {
+                sellAppAdj = -1; // Inverse on odd failure
+            }
         }
 
-        // Calculate SA
+        // Calculate SA roll
         const saRoll = new Roll("3d6");
         await saRoll.evaluate();
         let saBase = saRoll.total + demandMod + distanceMod + sellBargAdj + sellAppAdj;
 
         // Penalty for no trading skills
+        let noSkillsPenalty = 0;
         if (!profScores.bargaining && !profScores.appraisal && !profScores.trade) {
+            noSkillsPenalty = -2;
             saBase -= 2;
         }
 
         const saPercent = CargoRegistry.getSaleAdjustment(saBase);
         const baseValue = CargoRegistry.get(cargoType).baseValue;
-        const pricePerLoad = Math.max(1, Math.floor(baseValue * saPercent / 100));
+        
+        // Apply bargaining margin bonus to final price (5% per point, max 25%)
+        const bargainBonus = Math.min(25, bargainMargin * 5);
+        const finalPercent = Math.floor(saPercent * (100 + bargainBonus) / 100);
+        
+        const pricePerLoad = Math.max(1, Math.floor(baseValue * finalPercent / 100));
         const totalValue = pricePerLoad * loads;
+
+        // Log the SA calculation for debugging
+        logRef.value += `<p><em>Sale Price Calc: SA Roll ${saRoll.total} + Demand ${demandMod}${tradeNote} + Distance ${distanceMod} (${distanceCategory}) + Barg ${sellBargAdj} + App ${sellAppAdj}${noSkillsPenalty ? ' - 2 (no skills)' : ''} = ${saBase} → ${saPercent}%${bargainBonus > 0 ? ` (+${bargainBonus}% bargain bonus) = ${finalPercent}%` : ''} of ${baseValue} gp = ${pricePerLoad} gp/load</em></p>`;
 
         return { 
             pricePerLoad, 
             totalSaleValue: totalValue,
-            distanceRollInfo: this._lastDistanceRoll // Include for perishability check
+            distanceRollInfo: this._lastDistanceRoll
         };
     }
 
