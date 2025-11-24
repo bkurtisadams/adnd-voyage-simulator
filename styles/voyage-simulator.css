@@ -83,13 +83,13 @@
     padding: 0 10px;
 }
 
-#voyage-setup-form .tabs {
+.adnd-voyage-simulator .tabs {
     margin-bottom: 15px;
     border-bottom: 2px solid #999;
     display: flex;
 }
 
-#voyage-setup-form .tabs .item {
+.adnd-voyage-simulator .tabs .item {
     padding: 8px 16px;
     cursor: pointer;
     border: 1px solid transparent;
@@ -98,25 +98,30 @@
     background: #f0f0f0;
     color: #666;
     font-weight: bold;
+    text-decoration: none;
 }
 
-#voyage-setup-form .tabs .item:hover {
+.adnd-voyage-simulator .tabs .item:hover {
     background: #e0e0e0;
 }
 
-#voyage-setup-form .tabs .item.active {
+.adnd-voyage-simulator .tabs .item.active {
     background: white;
     color: black;
     border-color: #999;
     border-bottom-color: white;
 }
 
-#voyage-setup-form .tab {
+.adnd-voyage-simulator .sheet-body {
+    min-height: 400px;
+}
+
+.adnd-voyage-simulator .sheet-body .tab {
     display: none;
     padding: 15px 0;
 }
 
-#voyage-setup-form .tab.active {
+.adnd-voyage-simulator .sheet-body .tab.active {
     display: block;
 }
 
@@ -202,11 +207,11 @@
         grid-template-columns: 1fr;
     }
     
-    #voyage-setup-form .tabs {
+    .adnd-voyage-simulator .tabs {
         flex-direction: column;
     }
     
-    #voyage-setup-form .tabs .item {
+    .adnd-voyage-simulator .tabs .item {
         border: 1px solid #999;
         margin-bottom: 4px;
     }

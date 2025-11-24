@@ -24,7 +24,7 @@ export class VoyageSetupDialog extends FormApplication {
             width: 700,
             height: "auto",
             tabs: [
-                { navSelector: ".tabs", contentSelector: ".tab-content", initial: "voyage-details" }
+                { navSelector: ".tabs", contentSelector: ".sheet-body", initial: "voyage-details" }
             ],
             closeOnSubmit: false,
             submitOnChange: false,
@@ -36,17 +36,15 @@ export class VoyageSetupDialog extends FormApplication {
         this.savedData = game.settings.get('adnd-voyage-simulator', 'lastVoyageSettings') || {};
     }
 
-        async getData() {
+    async getData() {
         const data = await super.getData();
 
-        // Build ship options
         data.ships = ShipRegistry.getAll().map(ship => ({
             id: ship.id,
             name: `${ship.name} (${ship.shipType})`,
             selected: ship.id === this.savedData.shipID
         }));
 
-        // Build route options
         data.routes = RouteRegistry.getAll().map(route => ({
             id: route.id,
             name: route.name,
@@ -54,7 +52,6 @@ export class VoyageSetupDialog extends FormApplication {
             selected: route.id === this.savedData.routeID
         }));
 
-        // Crew quality options
         data.crewQualities = [
             { value: "Landlubber", label: "Landlubber (-2)", selected: this.savedData.crewQuality === "Landlubber" },
             { value: "Green", label: "Green (-2)", selected: this.savedData.crewQuality === "Green" },
@@ -64,7 +61,6 @@ export class VoyageSetupDialog extends FormApplication {
             { value: "Old Salts", label: "Old Salts (+2)", selected: this.savedData.crewQuality === "Old Salts" }
         ];
 
-        // Calendar months
         data.months = [
             "Needfest", "Fireseek", "Readying", "Coldeven", "Growfest", "Planting",
             "Flocktime", "Wealsun", "Richfest", "Reaping", "Goodmonth", "Harvester",
@@ -74,7 +70,6 @@ export class VoyageSetupDialog extends FormApplication {
             selected: month === this.savedData.startingMonth
         }));
 
-        // Populate saved values
         data.saved = this.savedData;
         data.saved.startingGold = data.saved.startingGold || 1000;
         data.saved.tradeMode = data.saved.tradeMode || "speculation";
@@ -84,7 +79,6 @@ export class VoyageSetupDialog extends FormApplication {
         data.saved.startingYear = data.saved.startingYear || 569;
         data.saved.startingDay = data.saved.startingDay || 1;
 
-        // --- NEW: Ensure captain and lieutenant objects exist ---
         data.captain = {
           name: this.savedData.captainName || "",
           rank: "Captain"
@@ -94,7 +88,6 @@ export class VoyageSetupDialog extends FormApplication {
           rank: "Lieutenant"
         };
  
-        // If you want, auto-prefill from selected token’s Actor
         const actor = canvas.tokens.controlled[0]?.actor;
         if (actor && !data.captain.name) {
           data.captain.name = actor.name;
@@ -103,32 +96,12 @@ export class VoyageSetupDialog extends FormApplication {
         return data;
     }
 
-
     activateListeners(html) {
         super.activateListeners(html);
 
-        // Tab switching
-        html.find('.tabs .item').click(this._onTabChange.bind(this));
-
-        // Trade mode changes
         html.find('input[name="tradeMode"]').change(this._onTradeModeChange.bind(this));
-
-        // Automate trading toggle
         html.find('#automateTrading').change(this._onAutomateToggle.bind(this));
-
-        // Submit button
         html.find('button[type="submit"]').click(this._onSubmit.bind(this));
-    }
-
-    _onTabChange(event) {
-        event.preventDefault();
-        const tabName = $(event.currentTarget).data('tab');
-        
-        $(event.currentTarget).siblings().removeClass('active');
-        $(event.currentTarget).addClass('active');
-        
-        this.element.find('.tab').removeClass('active');
-        this.element.find(`.tab[data-tab="${tabName}"]`).addClass('active');
     }
 
     _onTradeModeChange(event) {
@@ -162,23 +135,18 @@ export class VoyageSetupDialog extends FormApplication {
         
         const formData = this._getFormData();
         
-        // Validate
         const validation = this._validateFormData(formData);
         if (!validation.valid) {
             ui.notifications.error(validation.message);
             return;
         }
 
-        // Save settings
         await game.settings.set('adnd-voyage-simulator', 'lastVoyageSettings', formData);
 
-        // Build voyage config
         const voyageConfig = this._buildVoyageConfig(formData);
 
-        // Close dialog
         this.close();
 
-        // Start voyage
         const simulator = new VoyageSimulator();
         await simulator.startVoyage(voyageConfig);
     }
@@ -191,7 +159,6 @@ export class VoyageSetupDialog extends FormApplication {
             routeID: html.find('#routeID').val(),
             captainName: html.find('#captainName').val(),
             
-            // Captain abilities
             str: parseInt(html.find('#str').val()),
             dex: parseInt(html.find('#dex').val()),
             con: parseInt(html.find('#con').val()),
@@ -199,7 +166,6 @@ export class VoyageSetupDialog extends FormApplication {
             wis: parseInt(html.find('#wis').val()),
             cha: parseInt(html.find('#cha').val()),
             
-            // Captain skills
             skillBargaining: html.find('#skillBargaining').is(':checked'),
             skillAppraisal: html.find('#skillAppraisal').is(':checked'),
             skillTrade: html.find('#skillTrade').is(':checked'),
@@ -216,7 +182,6 @@ export class VoyageSetupDialog extends FormApplication {
             skillSignaling: html.find('#skillSignaling').is(':checked'),
             skillVesselIdentification: html.find('#skillVesselIdentification').is(':checked'),
             
-            // Lieutenant
             ltName: html.find('#lieutenantName').val(),
             ltStr: parseInt(html.find('#ltStr').val()),
             ltDex: parseInt(html.find('#ltDex').val()),
@@ -225,7 +190,6 @@ export class VoyageSetupDialog extends FormApplication {
             ltWis: parseInt(html.find('#ltWis').val()),
             ltCha: parseInt(html.find('#ltCha').val()),
             
-            // Lieutenant skills
             ltSkillBargaining: html.find('#ltSkillBargaining').is(':checked'),
             ltSkillAppraisal: html.find('#ltSkillAppraisal').is(':checked'),
             ltSkillTrade: html.find('#ltSkillTrade').is(':checked'),
@@ -242,7 +206,6 @@ export class VoyageSetupDialog extends FormApplication {
             ltSkillSignaling: html.find('#ltSkillSignaling').is(':checked'),
             ltSkillVesselIdentification: html.find('#ltSkillVesselIdentification').is(':checked'),
             
-            // Settings
             startingGold: parseInt(html.find('#startingGold').val()),
             tradeMode: html.find('input[name="tradeMode"]:checked').val(),
             commissionRate: parseInt(html.find('#commissionRate').val()),

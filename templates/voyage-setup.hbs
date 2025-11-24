@@ -1,13 +1,13 @@
 <form id="voyage-setup-form">
   <nav class="tabs" data-group="voyageSetupTabs">
-    <a class="item active" data-tab="voyage-details">Voyage Details</a>
+    <a class="item" data-tab="voyage-details">Voyage Details</a>
     <a class="item" data-tab="captain-info">Captain</a>
     <a class="item" data-tab="lieutenant-info">Lieutenant</a>
   </nav>
 
-  <section class="tab-content">
+  <section class="sheet-body">
     <!-- ============ VOYAGE DETAILS ============ -->
-    <section class="tab active" data-tab="voyage-details">
+    <div class="tab" data-tab="voyage-details">
       <div class="form-group">
         <label for="shipID">Select Ship:</label>
         <select id="shipID" name="shipID" required>
@@ -42,7 +42,6 @@
         </label>
       </div>
 
-      <!-- Only visible when NOT automating trading -->
       <div class="form-group" id="manualTradeModeGroup"
            style="display: {{#if saved.automateTrading}}none{{else}}block{{/if}};">
         <label>Trade Mode:</label><br/>
@@ -56,7 +55,6 @@
         </label>
       </div>
 
-      <!-- Show commission% only if NOT automating AND tradeMode == consignment -->
       <div class="form-group" id="commissionRateGroup"
            style="display:
              {{#if saved.automateTrading}}
@@ -117,10 +115,10 @@
         <label for="startingDay">Starting Day:</label>
         <input type="number" id="startingDay" name="startingDay" value="{{saved.startingDay}}" min="1" max="28" required/>
       </div>
-    </section>
+    </div>
 
     <!-- ============ CAPTAIN ============ -->
-    <section class="tab" data-tab="captain-info">
+    <div class="tab" data-tab="captain-info">
       <h2>Captain</h2>
 
       <div class="form-group">
@@ -156,10 +154,10 @@
         <label><input type="checkbox" id="skillSignaling"           name="skillSignaling"           {{checked saved.skillSignaling}}>           Signaling</label>
         <label><input type="checkbox" id="skillVesselIdentification" name="skillVesselIdentification" {{checked saved.skillVesselIdentification}}> Vessel Identification</label>
       </div>
-    </section>
+    </div>
 
     <!-- ============ LIEUTENANT ============ -->
-    <section class="tab" data-tab="lieutenant-info">
+    <div class="tab" data-tab="lieutenant-info">
       <h2>Lieutenant</h2>
 
       <div class="form-group">
@@ -190,12 +188,12 @@
         <label><input type="checkbox" id="ltSkillPiloting"            name="ltSkillPiloting"            {{checked saved.ltSkillPiloting}}>            Piloting</label>
         <label><input type="checkbox" id="ltSkillSeaLore"             name="ltSkillSeaLore"             {{checked saved.ltSkillSeaLore}}>             Sea Lore</label>
         <label><input type="checkbox" id="ltSkillShipRowing"          name="ltSkillShipRowing"          {{checked saved.ltSkillShipRowing}}>          Ship Rowing</label>
-        <label><input type="checkbox" id="ltSkillSailing"             name="ltSkillSailing"             {{checked saved.ltSkillSailing}}>             Ship Sailing</label>
+        <label><input type="checkbox" id="ltSkillShipSailing"         name="ltSkillShipSailing"         {{checked saved.ltSkillShipSailing}}>         Ship Sailing</label>
         <label><input type="checkbox" id="ltSkillShipwright"          name="ltSkillShipwright"          {{checked saved.ltSkillShipwright}}>          Shipwright</label>
         <label><input type="checkbox" id="ltSkillSignaling"           name="ltSkillSignaling"           {{checked saved.ltSkillSignaling}}>           Signaling</label>
         <label><input type="checkbox" id="ltSkillVesselIdentification" name="ltSkillVesselIdentification" {{checked saved.ltSkillVesselIdentification}}> Vessel Identification</label>
       </div>
-    </section>
+    </div>
   </section>
 
   <footer class="sheet-footer flexrow">
