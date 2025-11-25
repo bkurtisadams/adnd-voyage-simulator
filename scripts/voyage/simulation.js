@@ -234,6 +234,7 @@ export class VoyageSimulator {
       return {
           // Core Data
           ship: ship,
+          currentCrew: JSON.parse(JSON.stringify(ship.crew)),
           route: route,
           
           // Actors
@@ -635,6 +636,27 @@ export class VoyageSimulator {
           
           if (encounterDamage.crewLoss > 0) {
               state.voyageLogHtml.value += `<p>⚠️ Crew casualties: ${encounterDamage.crewLoss} lost!</p>`;
+              
+              // Reduce crew count from currentCrew
+              let remainingLosses = encounterDamage.crewLoss;
+              
+              // Remove sailors first (most common crew type)
+              const sailors = state.currentCrew.find(c => c.role === "sailor" || c.role === "sailors");
+              if (sailors && remainingLosses > 0) {
+                  const lostSailors = Math.min(sailors.count, remainingLosses);
+                  sailors.count -= lostSailors;
+                  remainingLosses -= lostSailors;
+              }
+              
+              // If still have losses, remove marines
+              if (remainingLosses > 0) {
+                  const marines = state.currentCrew.find(c => c.role === "marine" || c.role === "marines");
+                  if (marines) {
+                      const lostMarines = Math.min(marines.count, remainingLosses);
+                      marines.count -= lostMarines;
+                      remainingLosses -= lostMarines;
+                  }
+              }
               
               // Log crew loss event
               state.events.push({
@@ -1126,41 +1148,48 @@ export class VoyageSimulator {
   }    
 
   async offerCrewHiring(state, port, portActivity) {
-      // Define required crew based on ship template
-      const requiredCrew = state.ship.crew; // This should be the template crew from ship registry
-      const currentCrew = state.ship.crew; // This is the actual current crew
-      
-      const shortfall = CrewHiringSystem.calculateShortfall(currentCrew, requiredCrew);
-      
-      if (Object.keys(shortfall).length === 0) return;
-      
-      if (!CrewHiringSystem.canHireAtPort(port.size, "small")) {
-          state.voyageLogHtml.value += `<p><em>No crew available for hire at ${port.name}</em></p>`;
-          return;
-      }
-      
-      let hireChoice;
-      if (state.automateTrading) {
-          const shouldHire = CrewHiringSystem.shouldAutoHire(currentCrew, requiredCrew);
-          if (shouldHire) {
-              hireChoice = { hired: shortfall, totalMonthlyWages: Object.values(shortfall).reduce((sum, s) => sum + (s.cost * s.needed), 0) };
-          }
-      } else {
-          hireChoice = await CrewHiringSystem.offerHiringChoice(shortfall, state.treasury);
-      }
-      
-      if (hireChoice) {
-          CrewHiringSystem.applyHiredCrew(currentCrew, hireChoice.hired);
-          
-          state.voyageLogHtml.value += `<p><strong>Crew Hired:</strong> `;
-          for (const [role, data] of Object.entries(hireChoice.hired)) {
-              state.voyageLogHtml.value += `${data.needed} ${role}(s) @ ${data.cost} gp/month; `;
-          }
-          state.voyageLogHtml.value += `</p>`;
-          
-          portActivity.activities.push(`Hired replacement crew: ${JSON.stringify(hireChoice.hired)}`);
-      }
-  }
+    const requiredCrew = state.ship.crew; // Required crew from ship template
+    const currentCrew = state.currentCrew; // Actual current crew (tracked separately)
+    
+    const shortfall = CrewHiringSystem.calculateShortfall(currentCrew, requiredCrew);
+    
+    if (Object.keys(shortfall).length === 0) return;
+    
+    if (!CrewHiringSystem.canHireAtPort(port.size, "small")) {
+        state.voyageLogHtml.value += `<p><em>No crew available for hire at ${port.name}</em></p>`;
+        return;
+    }
+    
+    let hireChoice;
+    if (state.automateTrading) {
+        const shouldHire = CrewHiringSystem.shouldAutoHire(currentCrew, requiredCrew);
+        if (shouldHire) {
+            hireChoice = { hired: shortfall };
+        }
+    } else {
+        hireChoice = await CrewHiringSystem.offerHiringChoice(shortfall, state.treasury);
+    }
+    
+    if (hireChoice) {
+        // Update current crew counts in state.currentCrew
+        for (const [role, data] of Object.entries(hireChoice.hired)) {
+            const crewMember = currentCrew.find(c => c.role === role);
+            if (crewMember) {
+                crewMember.count += data.needed;
+            } else {
+                currentCrew.push({ role, count: data.needed });
+            }
+        }
+        
+        state.voyageLogHtml.value += `<p><strong>Crew Hired:</strong> `;
+        for (const [role, data] of Object.entries(hireChoice.hired)) {
+            state.voyageLogHtml.value += `${data.needed} ${role}(s) @ ${data.cost} gp/month; `;
+        }
+        state.voyageLogHtml.value += `</p>`;
+        
+        portActivity.activities.push(`Hired replacement crew: ${JSON.stringify(hireChoice.hired)}`);
+    }
+}
 
   getCurrentDate() {
       if (globalThis.dndWeather?.weatherSystem?.calendarTracker) {
