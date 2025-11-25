@@ -62,9 +62,12 @@
 #voyage-setup-form input[type="number"],
 #voyage-setup-form select {
     width: 100%;
-    padding: 6px;
+    box-sizing: border-box;
+    padding: 4px 8px;          /* a little less vertical padding */
     border: 1px solid #999;
     border-radius: 3px;
+    line-height: 1.4;          /* more space for the text */
+    min-height: 28px;          /* ensures the text isn't vertically clipped */
 }
 
 #voyage-setup-form input[type="checkbox"] {
