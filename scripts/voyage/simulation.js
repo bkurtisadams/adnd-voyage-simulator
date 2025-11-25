@@ -1061,99 +1061,90 @@ export class VoyageSimulator {
       portActivity.activities.push(`Received upfront transport payment: ${upfrontPayment} gp`);
   }
 
-  /* async offerShipRepairs(state, port, portActivity) {
-      const damage = state.ship.hullPoints.max - state.ship.hullPoints.value;
-      if (damage === 0) return;
-      
-      if (!ShipRepairSystem.canRepairAtPort(port.size)) {
-          state.voyageLogHtml.value += `<p><em>No repair facilities available at ${port.name} (Anchorage)</em></p>`;
-          return;
-      }
-      
-      // Check if captain/crew has Shipwright or Ship Carpentry
-      const hasProficiency = state.captainProficiencyScores?.shipwright || 
-                             state.captainProficiencyScores?.shipCarpentry ||
-                             state.lieutenantSkills?.shipwright ||
-                             state.lieutenantSkills?.shipCarpentry;
-      
-      let repairChoice;
-      if (state.automateTrading) {
-          repairChoice = ShipRepairSystem.shouldAutoRepair(
-              state.ship.hullPoints.value,
-              state.ship.hullPoints.max,
-              state.treasury
-          );
-      } else {
-          repairChoice = await ShipRepairSystem.offerRepairChoice(
-              state.ship.hullPoints.value,
-              state.ship.hullPoints.max,
-              state.treasury,
-              hasProficiency
-          );
-      }
-      
-      if (repairChoice) {
-          state.treasury -= repairChoice.cost;
-          state.expenseTotal += repairChoice.cost;
-          state.ship.hullPoints.value = state.ship.hullPoints.max;
-          
-          if (state.breakdown) state.breakdown.repairs = (state.breakdown.repairs || 0) + repairChoice.cost;
-          
-            this.recordLedgerEntry(state, this.getCurrentDate(), `Ship repairs at ${port.name}`, 0, repairChoice.cost);
-            
-            state.voyageLogHtml.value += `<p><strong>Ship Repaired:</strong> ${damage} hull points restored for ${repairChoice.cost} gp (${repairChoice.type})</p>`;
-            portActivity.activities.push(`Repaired ${damage} hull points (${repairChoice.type}): ${repairChoice.cost} gp`);
-        }
-    } */
-
   async offerShipRepairs(state, port, portActivity) {
-      const damage = state.ship.hullPoints.max - state.ship.hullPoints.value;
-      if (damage === 0) return;
-      
-      if (!ShipRepairSystem.canRepairAtPort(port.size)) {
-          state.voyageLogHtml.value += `<p><em>No repair facilities available at ${port.name} (Anchorage)</em></p>`;
-          return;
-      }
-      
-      const hasProficiency = state.captainProficiencyScores?.shipwright || 
-                          state.captainProficiencyScores?.shipCarpentry ||
-                          state.lieutenantSkills?.shipwright ||
-                          state.lieutenantSkills?.shipCarpentry;
-      
-      let repairChoice;
-      if (state.automateTrading) {
-          repairChoice = ShipRepairSystem.shouldAutoRepair(
-              state.ship.hullPoints.value,
-              state.ship.hullPoints.max,
-              state.treasury
-          );
-          
-          // ADD THIS LOGGING:
-          if (!repairChoice) {
-              const damagePercent = Math.round((damage / state.ship.hullPoints.max) * 100);
-              const repairCost = damage * 100;
-              if (damagePercent < 10) {
-                  state.voyageLogHtml.value += `<p><em>Ship damage: ${damage} HP (${damagePercent}%), repairs deferred (minor damage)</em></p>`;
-              } else {
-                  state.voyageLogHtml.value += `<p><em>Ship damage: ${damage} HP (${damagePercent}%), repairs deferred (insufficient funds: need ${repairCost} gp)</em></p>`;
-              }
-          }
-      } else {
-          repairChoice = await ShipRepairSystem.offerRepairChoice(/*...*/);
-      }
-      
-      if (repairChoice) {
+    const damage = state.ship.hullPoints.max - state.ship.hullPoints.value;
+    if (damage === 0) return;
+    
+    if (!ShipRepairSystem.canRepairAtPort(port.size)) {
+        state.voyageLogHtml.value += `<p><em>No repair facilities available at ${port.name} (Anchorage)</em></p>`;
+        return;
+    }
+
+    // --- Qualified DIY repair crew per Seafaring + DMG ---
+    const baseCrew = (state.currentCrew || []).reduce(
+        (sum, group) => sum + (group.count || 0),
+        0
+    );
+    const officerCrew =
+        (state.officerCounts?.lieutenants || 0) +
+        (state.officerCounts?.mates || 0) +
+        1; // captain
+    const totalCrew = baseCrew + officerCrew;
+
+    const hasShipwright =
+        !!state.captainProficiencyScores?.shipwright ||
+        !!state.lieutenantSkills?.shipwright;
+    const hasShipCarpentry =
+        !!state.captainProficiencyScores?.shipCarpentry ||
+        !!state.lieutenantSkills?.shipCarpentry;
+
+    const hasQualifiedDIYRepairCrew =
+        totalCrew >= 5 && (hasShipwright || hasShipCarpentry);
+    // ------------------------------------------------------
+
+    let repairChoice;
+    if (state.automateTrading) {
+        repairChoice = ShipRepairSystem.shouldAutoRepair(
+            state.ship.hullPoints.value,
+            state.ship.hullPoints.max,
+            state.treasury
+        );
+
+        if (!repairChoice) {
+            const damagePercent = Math.round((damage / state.ship.hullPoints.max) * 100);
+            const repairCost = damage * 100;
+
+            if (damagePercent < 10) {
+            state.voyageLogHtml.value +=
+                `<p><em>Ship damage is only ${damagePercent}%—repairs deferred (minor damage).</em></p>`;
+            } else {
+            state.voyageLogHtml.value +=
+                `<p><em>Ship damage is ${damagePercent}% but repairs deferred (insufficient funds: need ${repairCost} gp).</em></p>`;
+            }
+        }
+          } else {
+                repairChoice = await ShipRepairSystem.offerRepairChoice(
+                    state.ship.hullPoints.value,
+                    state.ship.hullPoints.max,
+                    state.treasury,
+                    hasQualifiedDIYRepairCrew
+                );
+            }
+
+        if (repairChoice) {
         state.treasury -= repairChoice.cost;
         state.expenseTotal += repairChoice.cost;
         state.ship.hullPoints.value = state.ship.hullPoints.max;
-        
-        if (state.breakdown) state.breakdown.repairs = (state.breakdown.repairs || 0) + repairChoice.cost;
-        
-        this.recordLedgerEntry(state, this.getCurrentDate(), `Ship repairs at ${port.name}`, 0, repairChoice.cost);
-        
-        state.voyageLogHtml.value += `<p><strong>Ship Repaired:</strong> ${damage} hull points restored for ${repairChoice.cost} gp (${repairChoice.type})</p>`;
-        portActivity.activities.push(`Repaired ${damage} hull points (${repairChoice.type}): ${repairChoice.cost} gp`);
-    }
+
+        if (state.breakdown) {
+            state.breakdown.repairs = (state.breakdown.repairs || 0) + repairChoice.cost;
+        }
+
+        this.recordLedgerEntry(
+            state,
+            this.getCurrentDate(),
+            `Ship repairs at ${port.name}`,
+            0,
+            repairChoice.cost
+        );
+
+        state.voyageLogHtml.value +=
+            `<p><strong>Ship Repairs:</strong> Hull restored for ${repairChoice.cost} gp (${repairChoice.type}).</p>`;
+        portActivity.activities.push(
+            `Repaired ${damage} hull points (${repairChoice.type}): ${repairChoice.cost} gp`
+        );
+        }
+
   }    
 
   async offerCrewHiring(state, port, portActivity) {
