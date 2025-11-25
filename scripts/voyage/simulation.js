@@ -13,6 +13,7 @@ import { CargoSelling } from '../trading/cargo-sell.js';
 import { CargoOperations } from '../trading/cargo-operations.js';
 import { TradingStrategy } from '../trading/trading-strategy.js';
 import { ReportGenerator } from '../journal/report-generator.js';
+import { TransportHireSystem } from '../trading/transport-hire.js';
 
 export class VoyageSimulator {
   /** Persist active voyages in a single world setting */
@@ -399,8 +400,14 @@ export class VoyageSimulator {
       if (state.tradeMode === "consignment") {
           await this.loadConsignmentCargo(state, portActivity);
       } else {
-          // At origin, use strategy with all legs ahead
-          await this.attemptStrategicPurchase(state, originID, portActivity, -1, legs);
+          // Check for transport job first
+          const soliciting = true;
+          await this.checkTransportForHire(state, originID, portActivity, legs, -1, true);
+          
+          // If no transport job taken, buy cargo speculatively
+          if (state.currentCargo.loads === 0) {
+              await this.attemptStrategicPurchase(state, originID, portActivity, -1, legs);
+          }
       }
   }
 
@@ -778,7 +785,10 @@ export class VoyageSimulator {
 
       state.portActivities.push(portActivity);
       
-      // 6. Handle Cargo Trading with Strategy
+      // 6. Handle Transport Job Delivery (if carrying one)
+      await this.handleTransportDelivery(state, portId, portActivity);
+      
+      // 7. Handle Cargo Trading with Strategy
       const isFinalPort = legIndex === allLegs.length - 1;
       const remainingLegs = allLegs.slice(legIndex + 1);
       
@@ -790,8 +800,8 @@ export class VoyageSimulator {
           }
       }
       
-      // Selling decision
-      if (state.currentCargo.loads > 0 && state.tradeMode === "speculation") {
+      // Selling decision (skip if transport job - must deliver to destination)
+      if (state.currentCargo.loads > 0 && state.tradeMode === "speculation" && !state.currentCargo.isTransportJob) {
           const distanceToNext = remainingLegs[0]?.distance || 0;
           const sellEval = TradingStrategy.evaluateSale({
               cargoType: state.currentCargo.type,
@@ -812,7 +822,13 @@ export class VoyageSimulator {
           }
       }
       
-      // Buying decision  
+      // 8. Check for Transport for Hire offers (before buying)
+      if (state.currentCargo.loads === 0 && !isFinalPort) {
+          const soliciting = true; // Empty hold = actively seeking work
+          await this.checkTransportForHire(state, portId, portActivity, allLegs, legIndex, true);
+      }
+      
+      // Buying decision (only if no transport job accepted)
       if (state.tradeMode === "speculation" && state.currentCargo.loads === 0 && !isFinalPort) {
           await this.attemptStrategicPurchase(state, portId, portActivity, legIndex, allLegs);
       }
@@ -830,7 +846,8 @@ export class VoyageSimulator {
           voyageLogHtmlRef: state.voyageLogHtml,
           tradeMode: state.tradeMode,
           commissionRate: state.commissionRate,
-          crewQualityMod: state.crewQualityMod
+          crewQualityMod: state.crewQualityMod,
+          captainCharisma: state.captain.chaScore
       });
       
       state.treasury = result.newTreasury;
@@ -856,9 +873,10 @@ export class VoyageSimulator {
       
       // Get merchant offers to evaluate
       const port = PortRegistry.get(portId);
-      const merchantResult = await CargoPurchasing.rollMerchantAvailability(port);
+      const merchantResult = await CargoPurchasing.rollMerchantAvailability(port, state.captain.chaScore);
       
-      state.voyageLogHtml.value += `<p><strong>Merchants in ${port.name}:</strong> ${merchantResult.merchantCount} available (1d6: ${merchantResult.roll} + size mod: ${merchantResult.portSizeMod}).</p>`;
+      const reactionNote = merchantResult.reactionAdj !== 0 ? ` + CHA: ${merchantResult.reactionAdj >= 0 ? '+' : ''}${merchantResult.reactionAdj}` : '';
+      state.voyageLogHtml.value += `<p><strong>Merchants in ${port.name}:</strong> ${merchantResult.merchantCount} available (1d6: ${merchantResult.roll} + size: ${merchantResult.portSizeMod}${reactionNote}).</p>`;
       
       if (merchantResult.merchantCount === 0) {
           state.voyageLogHtml.value += `<p><em>No merchants available at ${port.name}.</em></p>`;
@@ -1212,4 +1230,139 @@ export class VoyageSimulator {
       } catch {}
     }
   }
+
+    async checkTransportForHire(state, portId, portActivity, legs, legIndex, solicited = false) {
+        const job = await TransportHireSystem.rollForJob(solicited);
+        
+        if (!job) {
+            if (solicited) {
+                state.voyageLogHtml.value += `<p><em>No transport jobs available despite solicitation.</em></p>`;
+            }
+            return null;
+        }
+        
+        const port = PortRegistry.get(portId);
+        state.voyageLogHtml.value += `<p><strong>Transport for Hire Offer:</strong> ${job.loads} loads of ${job.cargoName} to destination within ${job.maxDistance} miles (rolled ${job.roll} ≤ ${job.chance}%)</p>`;
+        
+        // Find valid destination within range
+        const validDestinations = this.findDestinationsWithinRange(legs, legIndex, job.maxDistance);
+        
+        if (validDestinations.length === 0) {
+            state.voyageLogHtml.value += `<p><em>No valid destinations within range.</em></p>`;
+            return null;
+        }
+        
+        // Pick most distant valid destination for best fee
+        const destination = validDestinations.reduce((best, curr) => 
+            curr.distance > best.distance ? curr : best
+        );
+        
+        const contract = TransportHireSystem.createContract(job, destination.portId, destination.distance);
+        
+        if (state.automateTrading) {
+            if (state.currentCargo.loads === 0) {
+                state.treasury += contract.upfrontPayment;
+                state.currentCargo = {
+                    type: contract.cargoType,
+                    loads: contract.loads,
+                    purchasePrice: 0,
+                    isTransportJob: true,
+                    contract: contract
+                };
+                state.voyageLogHtml.value += `<p><strong>Transport Job Accepted:</strong> ${contract.loads} loads to ${PortRegistry.get(contract.destinationPort).name} (${contract.distance} mi)</p>`;
+                state.voyageLogHtml.value += `<p><strong>Upfront Payment:</strong> ${contract.upfrontPayment} gp (${contract.deliveryPayment} gp on delivery)</p>`;
+                portActivity.activities.push(`Accepted transport job: ${contract.loads} loads, ${contract.totalFee} gp total`);
+                
+                this.recordLedgerEntry(state, this.getCurrentDate(), "Transport Hire (upfront)", contract.upfrontPayment, 0);
+                return contract;
+            } else {
+                state.voyageLogHtml.value += `<p><em>Declined transport job (cargo hold not empty).</em></p>`;
+                return null;
+            }
+        } else {
+            const accepted = await this.offerTransportJobChoice(contract, state.currentCargo.loads, state.ship.cargoCapacity);
+            
+            if (accepted) {
+                state.treasury += contract.upfrontPayment;
+                state.currentCargo = {
+                    type: contract.cargoType,
+                    loads: contract.loads,
+                    purchasePrice: 0,
+                    isTransportJob: true,
+                    contract: contract
+                };
+                state.voyageLogHtml.value += `<p><strong>Transport Job Accepted:</strong> ${contract.loads} loads to ${PortRegistry.get(contract.destinationPort).name}</p>`;
+                state.voyageLogHtml.value += `<p><strong>Upfront Payment:</strong> ${contract.upfrontPayment} gp</p>`;
+                portActivity.activities.push(`Accepted transport job: ${contract.loads} loads, ${contract.totalFee} gp total`);
+                
+                this.recordLedgerEntry(state, this.getCurrentDate(), "Transport Hire (upfront)", contract.upfrontPayment, 0);
+                return contract;
+            }
+            return null;
+        }
+    }
+
+    findDestinationsWithinRange(legs, currentLegIndex, maxDistance) {
+        const destinations = [];
+        let cumulativeDistance = 0;
+        
+        // Start from current position, check remaining legs
+        const startIndex = currentLegIndex < 0 ? 0 : currentLegIndex;
+        
+        for (let i = startIndex; i < legs.length; i++) {
+            cumulativeDistance += legs[i].distance;
+            if (cumulativeDistance <= maxDistance) {
+                destinations.push({
+                    portId: legs[i].toID,
+                    distance: cumulativeDistance
+                });
+            }
+        }
+        
+        return destinations;
+    }
+
+    async offerTransportJobChoice(contract, currentLoads, shipCapacity) {
+        const destPort = PortRegistry.get(contract.destinationPort);
+        
+        return new Promise((resolve) => {
+            new Dialog({
+                title: "Transport for Hire Offer",
+                content: `
+                    <p>A merchant offers to hire your ship:</p>
+                    <p><strong>Cargo:</strong> ${contract.loads} loads of ${contract.cargoName}</p>
+                    <p><strong>Destination:</strong> ${destPort.name} (${contract.distance} miles)</p>
+                    <p><strong>Payment:</strong> ${contract.totalFee} gp total</p>
+                    <ul>
+                        <li>Upfront: ${contract.upfrontPayment} gp</li>
+                        <li>On delivery: ${contract.deliveryPayment} gp</li>
+                    </ul>
+                    <p><em>Current cargo: ${currentLoads}/${shipCapacity} loads</em></p>
+                    ${currentLoads > 0 ? '<p><strong>Warning:</strong> You have cargo aboard!</p>' : ''}
+                `,
+                buttons: {
+                    accept: { label: "Accept Job", callback: () => resolve(true) },
+                    decline: { label: "Decline", callback: () => resolve(false) }
+                },
+                default: currentLoads === 0 ? "accept" : "decline"
+            }).render(true);
+        });
+    }
+
+    async handleTransportDelivery(state, portId, portActivity) {
+        if (!state.currentCargo.isTransportJob) return;
+        
+        const contract = state.currentCargo.contract;
+        if (contract.destinationPort !== portId) return;
+        
+        // Deliver cargo and receive payment
+        state.treasury += contract.deliveryPayment;
+        state.voyageLogHtml.value += `<p><strong>Transport Delivery Complete:</strong> Received ${contract.deliveryPayment} gp</p>`;
+        portActivity.activities.push(`Delivered transport cargo, received ${contract.deliveryPayment} gp`);
+        
+        this.recordLedgerEntry(state, this.getCurrentDate(), "Transport Hire (delivery)", contract.deliveryPayment, 0);
+        
+        // Clear cargo
+        state.currentCargo = { type: null, loads: 0, purchasePrice: 0 };
+    }
 }

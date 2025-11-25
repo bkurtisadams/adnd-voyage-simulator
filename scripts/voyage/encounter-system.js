@@ -466,7 +466,7 @@ export class EncounterSystem {
 
     /**
      * Determine if a creature can harm a ship
-     * Only large monsters (L/G size), aerial monsters, and pirates/hostile ships
+     * Only truly large monsters, aerial monsters, and pirates/hostile ships
      */
     static canCreatureHarmShip(encounter) {
         const name = encounter.name.toLowerCase();
@@ -484,31 +484,56 @@ export class EncounterSystem {
             return { canHarm: true, type: "aerial", canHarmCrew: true, reason: "" };
         }
         
-        // Large sea monsters that can damage ships (size L or G, or known large creatures)
+        // Small/medium sea creatures that CANNOT harm ships (even if M/L size)
+        const harmlessCreatures = [
+            "shark", "barracuda", "ray", "eel", "fish", "porpoise", "dolphin",
+            "seal", "sea lion", "otter", "crab", "jellyfish", "sea snake"
+        ];
+        
+        // Check if it's a harmless creature (but exclude giant/huge variants)
+        const isHarmlessVariant = harmlessCreatures.some(c => name.includes(c)) && 
+                                !name.includes("giant") && 
+                                !name.includes("huge") &&
+                                !name.includes("dire");
+        
+        if (isHarmlessVariant) {
+            const creatureName = encounter.name;
+            return { 
+                canHarm: false, 
+                type: "small", 
+                canHarmCrew: false, 
+                reason: `${creatureName} circles the ship but cannot harm the vessel.`
+            };
+        }
+        
+        // Truly large sea monsters that can damage ships
         const largeSeaMonsters = [
             "kraken", "leviathan", "sea serpent", "whale", "turtle, giant", 
             "squid, giant", "octopus, giant", "elemental", "dragon turtle",
-            "serpent", "hydra", "aboleth"
+            "hydra", "aboleth", "shark, giant"
         ];
         
-        // Check explicit size
-        const isLargeSize = size.includes("L") || size.includes("G");
+        // Check explicit G (Giant) size or known huge monsters
+        const isGiantSize = size.includes("G");
+        const isKnownHuge = largeSeaMonsters.some(m => name.includes(m));
         
-        // Check known large monsters
-        const isKnownLarge = largeSeaMonsters.some(m => name.includes(m));
+        // Check HD - need at least 8 HD to damage a ship
+        const hdMatch = encounter.hd?.match(/(\d+)/);
+        const baseHD = hdMatch ? parseInt(hdMatch[1]) : 1;
+        const hasSignificantHD = baseHD >= 8;
         
         // Merrow (ogres) and Scrags (trolls) are large humanoids that can board
         const canBoard = ["merrow", "scrag", "troll", "ogre", "giant"].some(m => name.includes(m));
         
-        if (isLargeSize || isKnownLarge) {
+        if ((isGiantSize || isKnownHuge) && hasSignificantHD) {
             return { canHarm: true, type: "large", canHarmCrew: true, reason: "" };
         }
         
-        if (canBoard) {
+        if (canBoard && hasSignificantHD) {
             return { canHarm: true, type: "boarding", canHarmCrew: true, reason: "" };
         }
         
-        // Small/medium creatures cannot harm ships
+        // Everything else cannot harm ships
         const creatureName = encounter.name;
         return { 
             canHarm: false, 

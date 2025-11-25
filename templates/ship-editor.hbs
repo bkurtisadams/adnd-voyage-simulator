@@ -1,0 +1,168 @@
+<form class="ship-editor-form">
+    <div class="form-group">
+        <label>Select Ship:</label>
+        <select id="shipSelect" name="shipSelect">
+            {{#each ships}}
+                <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>
+            {{/each}}
+        </select>
+    </div>
+
+    {{#if hasShip}}
+    <hr>
+
+    <h3>Ship Details</h3>
+    
+    <div class="form-row">
+        <div class="form-group">
+            <label>Name:</label>
+            <input type="text" name="name" value="{{ship.name}}">
+        </div>
+        <div class="form-group">
+            <label>Type:</label>
+            <input type="text" name="shipType" value="{{ship.shipType}}">
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Hull Points (Current):</label>
+            <input type="number" name="hullValue" value="{{ship.hullPoints.value}}" min="0" max="{{ship.hullPoints.max}}">
+        </div>
+        <div class="form-group">
+            <label>Hull Points (Max):</label>
+            <input type="number" name="hullMax" value="{{ship.hullPoints.max}}" min="1">
+        </div>
+        <div class="form-group" style="align-self: flex-end;">
+            <button type="button" id="resetHull" class="button-secondary">Reset to Max</button>
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Cargo Capacity (loads):</label>
+            <input type="number" name="cargoCapacity" value="{{ship.cargoCapacity}}" min="0">
+        </div>
+        <div class="form-group">
+            <label>Movement (mi/day):</label>
+            <input type="number" name="movement" value="{{ship.movement}}" min="0">
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Base Earnings/Day:</label>
+            <input type="number" name="baseEarningsPerDay" value="{{ship.baseEarningsPerDay}}" min="0">
+        </div>
+        <div class="form-group">
+            <label>Current Port:</label>
+            <input type="text" name="currentPort" value="{{ship.currentPort}}">
+        </div>
+    </div>
+
+    <hr>
+    <h3>Captain</h3>
+    
+    <div class="form-row">
+        <div class="form-group">
+            <label>Name:</label>
+            <input type="text" name="captainName" value="{{ship.captain.name}}">
+        </div>
+        <div class="form-group">
+            <label>Level:</label>
+            <input type="number" name="captainLevel" value="{{ship.captain.level}}" min="0">
+        </div>
+    </div>
+
+    <hr>
+    <h3>Crew</h3>
+    
+    <div class="crew-list">
+        {{#each ship.crew}}
+        <div class="crew-row">
+            <select name="crew_{{@index}}_role">
+                <option value="lieutenant" {{#if (eq this.role "lieutenant")}}selected{{/if}}>Lieutenant</option>
+                <option value="mate" {{#if (eq this.role "mate")}}selected{{/if}}>Mate</option>
+                <option value="sailor" {{#if (eq this.role "sailor")}}selected{{/if}}>Sailor</option>
+                <option value="oarsman" {{#if (eq this.role "oarsman")}}selected{{/if}}>Oarsman</option>
+                <option value="marine" {{#if (eq this.role "marine")}}selected{{/if}}>Marine</option>
+            </select>
+            <input type="number" name="crew_{{@index}}_level" value="{{this.level}}" min="0" placeholder="Level" style="width: 60px;">
+            <input type="number" name="crew_{{@index}}_count" value="{{this.count}}" min="0" placeholder="Count" style="width: 60px;">
+            <button type="button" class="delete-crew" data-index="{{@index}}">✖</button>
+        </div>
+        {{/each}}
+    </div>
+
+    <button type="button" id="addCrew" class="button-secondary">+ Add Crew</button>
+
+    <hr>
+    <div class="form-actions">
+        <button type="submit" class="button-primary">Save Changes</button>
+        <button type="button" class="close">Close</button>
+    </div>
+    {{/if}}
+</form>
+
+<style>
+.ship-editor-form {
+    padding: 10px;
+}
+.form-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.form-group {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+.form-group label {
+    font-weight: bold;
+    margin-bottom: 3px;
+}
+.form-group input,
+.form-group select {
+    padding: 5px;
+}
+.crew-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 5px;
+    align-items: center;
+}
+.crew-row select {
+    flex: 2;
+}
+.delete-crew {
+    background: #d9534f;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+.button-primary {
+    background: #5cb85c;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+.button-secondary {
+    background: #5bc0de;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+.form-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 15px;
+}
+</style>

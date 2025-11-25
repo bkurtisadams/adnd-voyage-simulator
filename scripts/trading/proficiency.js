@@ -58,6 +58,19 @@ export class ProficiencySystem {
     }
 
     /**
+     * Get Charisma Reaction Adjustment for merchant availability
+     * Based on 1e PHB Charisma Table
+     */
+    static getReactionAdjustment(chaScore) {
+        if (chaScore <= 5) return -2;
+        if (chaScore <= 8) return -1;
+        if (chaScore <= 13) return 0;
+        if (chaScore <= 15) return 1;
+        if (chaScore <= 17) return 2;
+        return 3; // 18+
+    }
+
+    /**
      * Get crew quality modifier
      */
     static getCrewQualityModifier(quality) {
@@ -112,12 +125,14 @@ export class ProficiencySystem {
             const roll = new Roll(`1d20 + ${modifier + crewQualityMod}`);
             await roll.evaluate();
             
+            const success = roll.total <= unskilledScore;
             return {
-                success: roll.total <= unskilledScore,
+                success,
                 roll: roll.total,
                 needed: unskilledScore,
                 modifier: modifier + crewQualityMod,
-                note: "Unskilled piloting attempt"
+                note: "Unskilled piloting attempt",
+                missedBy: success ? 0 : roll.total - unskilledScore
             };
         }
 
@@ -147,11 +162,13 @@ export class ProficiencySystem {
         const roll = new Roll(`1d20 + ${effectiveModifier}`);
         await roll.evaluate();
 
+        const success = roll.total <= captainScore;
         return {
-            success: roll.total <= captainScore,
+            success,
             roll: roll.total,
             needed: captainScore,
-            modifier: effectiveModifier
+            modifier: effectiveModifier,
+            missedBy: success ? 0 : roll.total - captainScore
         };
     }
 }

@@ -12,6 +12,7 @@ import { RouteRegistry } from './data/routes.js';
 import { CargoRegistry } from './data/cargo.js';
 import { EncounterRegistry } from './data/encounters.js';
 import { VoyageSetupDialog } from './ui/voyage-dialog.js';
+import { ShipEditorDialog } from './ui/ship-editor-dialog.js';
 
 console.log("=== All imports successful ===");
 
@@ -49,7 +50,8 @@ class ADnDVoyageSimulator {
             routes: RouteRegistry,
             cargo: CargoRegistry,
             encounters: EncounterRegistry,
-            openDialog: () => new VoyageSetupDialog().render(true)
+            openDialog: () => new VoyageSetupDialog().render(true),
+            editShip: () => new ShipEditorDialog().render(true)  // <-- ADD THIS LINE
         };
         
         console.log(`${this.TITLE} | Initialization complete`);
@@ -142,6 +144,26 @@ class ADnDVoyageSimulator {
             config: false,
             type: Object,
             default: {}
+        });
+
+        // Port Agents
+        game.settings.register(this.ID, 'portAgentsEnabled', {
+            name: 'Port Agents Available',
+            hint: 'Allow hiring port agents as middlemen for trading (fee: 7-25% of transaction, -1 demand)',
+            scope: 'world',
+            config: true,
+            type: Boolean,
+            default: true
+        });
+
+        // Transport for Hire
+        game.settings.register(this.ID, 'transportForHireEnabled', {
+            name: 'Transport for Hire',
+            hint: 'Merchants may offer paid shipping jobs (5% chance, +25% if solicited)',
+            scope: 'world',
+            config: true,
+            type: Boolean,
+            default: true
         });
     }
 
@@ -366,6 +388,7 @@ Hooks.on('chatCommandsReady', (commands) => {
             new VoyageSetupDialog().render(true);
         }
     });
+
 });
 
 /**
