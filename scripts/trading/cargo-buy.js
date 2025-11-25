@@ -36,10 +36,8 @@ export class CargoPurchasing {
         let totalPurchaseCost = 0;
         let additionalDays = 0;
 
-        const port = PortRegistry.get(portId);
-        const portName = port.name;
-        const portSize = port.size;
-        const portSizeMod = PortRegistry.getSizeModifier(portSize);
+        const portName = PortRegistry.get(portId).name;
+        const portSizeMod = PortRegistry.getSizeModifier(PortRegistry.get(portId).size);
         const shipCapacity = shipTemplate.cargoCapacity;
 
         // Consignment mode - no purchasing
@@ -55,43 +53,61 @@ export class CargoPurchasing {
             };
         }
 
-        // Check for port agent usage
-        let useAgent = false;
-        let agent = null;
-        let agentFee = 0;
-        const agentAvailable = PortAgentSystem.isAvailable(portSize);
+        // Determine merchant availability
+        const merchantRoll = new Roll("1d6");
+        await merchantRoll.evaluate();
+        const reactionAdj = ProficiencySystem.getReactionAdjustment(captainCharisma || 10);
+        let merchantCount = Math.max(1, merchantRoll.total + portSizeMod + reactionAdj);
+        
+        const reactionNote = reactionAdj !== 0 ? ` (CHA ${reactionAdj >= 0 ? '+' : ''}${reactionAdj})` : '';
+        voyageLogHtmlRef.value += `<p><strong>Merchants in ${portName}:</strong> ${merchantCount} available${reactionNote}.</p>`;
+        currentPortActivity.activities.push(`Detected ${merchantCount} merchants in port.`);
 
-        if (automateTrading) {
-            useAgent = PortAgentSystem.shouldAutoHire(captainProficiencyScores, portSize);
-            if (useAgent) {
-                agent = await PortAgentSystem.generateAgent();
-                voyageLogHtmlRef.value += `<p><strong>Port Agent Hired:</strong> Skill ${agent.skillScore}, Fee ${agent.feePercent}%</p>`;
-            }
-        } else if (agentAvailable) {
-            // Manual mode - offer choice
-            useAgent = await this.offerAgentChoice(portName, captainProficiencyScores);
-            if (useAgent) {
-                agent = await PortAgentSystem.generateAgent();
-                voyageLogHtmlRef.value += `<p><strong>Port Agent Hired:</strong> Skill ${agent.skillScore}, Fee ${agent.feePercent}%</p>`;
+        // Check for port agent availability and auto-hire
+        let usingPortAgent = false;
+        let portAgent = null;
+        const port = PortRegistry.get(portId);
+        
+        if (PortAgentSystem.isAvailable(port.size)) {
+            const shouldAutoHire = PortAgentSystem.shouldAutoHire(captainProficiencyScores, port.size);
+            
+            if (shouldAutoHire) {
+                portAgent = await PortAgentSystem.generateAgent();
+                usingPortAgent = true;
+                voyageLogHtmlRef.value += `<p><strong>Port Agent Hired:</strong> Skill ${portAgent.skillScore}, Fee ${portAgent.feePercent}%</p>`;
+                currentPortActivity.activities.push(`Hired port agent (skill ${portAgent.skillScore}, fee ${portAgent.feePercent}%)`);
+            } else if (!automateTrading && merchantCount < 3) {
+                // Manual mode: offer port agent if few merchants
+                portAgent = await PortAgentSystem.generateAgent();
+                
+                const agentChoice = await new Promise((resolve) => {
+                    new Dialog({
+                        title: "Port Agent Available",
+                        content: `
+                            <p>Only ${merchantCount} merchants available. Hire a port agent?</p>
+                            <p><strong>Agent Skills:</strong> Bargaining ${portAgent.skillScore}, Appraisal ${portAgent.skillScore}</p>
+                            <p><strong>Fee:</strong> ${portAgent.feePercent}% of transaction</p>
+                            <p><strong>Your Skills:</strong> Bargaining ${captainProficiencyScores.bargaining || 'none'}, Appraisal ${captainProficiencyScores.appraisal || 'none'}</p>
+                        `,
+                        buttons: {
+                            hire: { label: "Hire Agent", callback: () => resolve(true) },
+                            skip: { label: "No Thanks", callback: () => resolve(false) }
+                        },
+                        default: "skip"
+                    }).render(true);
+                });
+                
+                if (agentChoice) {
+                    usingPortAgent = true;
+                    voyageLogHtmlRef.value += `<p><strong>Port Agent Hired:</strong> Skill ${portAgent.skillScore}, Fee ${portAgent.feePercent}%</p>`;
+                    currentPortActivity.activities.push(`Hired port agent (skill ${portAgent.skillScore}, fee ${portAgent.feePercent}%)`);
+                }
             }
         }
-
-        // Use agent's skills or captain's
-        const effectiveSkills = useAgent ? agent.proficiencyScores : captainProficiencyScores;
-
-        // Determine merchant availability (agent bypasses this requirement)
-        let merchantCount = 1;
-        if (!useAgent) {
-            const merchantRoll = new Roll("1d6");
-            await merchantRoll.evaluate();
-            const reactionAdj = ProficiencySystem.getReactionAdjustment(captainCharisma || 10);
-            merchantCount = Math.max(1, merchantRoll.total + portSizeMod + reactionAdj);
-            
-            const reactionNote = reactionAdj !== 0 ? ` (CHA ${reactionAdj >= 0 ? '+' : ''}${reactionAdj})` : '';
-            voyageLogHtmlRef.value += `<p><strong>Merchants in ${portName}:</strong> ${merchantCount} available${reactionNote}.</p>`;
-            currentPortActivity.activities.push(`Detected ${merchantCount} merchants in port.`);
-        } else {
-            voyageLogHtmlRef.value += `<p><em>Port agent handles merchant negotiations.</em></p>`;
+        
+        // If using port agent, bypass merchant requirement
+        if (usingPortAgent) {
+            merchantCount = 1; // Agent acts as merchant
         }
 
         // Determine cargo type available
@@ -100,26 +116,28 @@ export class CargoPurchasing {
         let rawBaseTypeRoll = baseRollObj.total;
         let finalBaseTypeRoll = rawBaseTypeRoll + portSizeMod;
 
-        // Apply Appraisal skill
+        // Apply Appraisal skill (use port agent if available)
         let appraisalAdjust = 0;
-        if (effectiveSkills.appraisal !== null) {
+        const appraisalScores = usingPortAgent ? portAgent.proficiencyScores : captainProficiencyScores;
+        
+        if (appraisalScores.appraisal !== null) {
             const appCheck = await ProficiencySystem.makeProficiencyCheck(
                 "appraisal",
-                effectiveSkills,
-                useAgent ? {} : lieutenantSkills,
-                useAgent ? 0 : crewQualityMod,
+                appraisalScores,
+                lieutenantSkills,
+                crewQualityMod,
                 0
             );
             
             if (appCheck.success) {
                 appraisalAdjust = +1;
-                voyageLogHtmlRef.value += `<p><strong>Appraisal Check${useAgent ? ' (Agent)' : ''}:</strong> SUCCESS (${appCheck.roll} ≤ ${appCheck.needed}) → +1 to goods quality.</p>`;
+                voyageLogHtmlRef.value += `<p><strong>Appraisal${usingPortAgent ? ' (Agent)' : ''}:</strong> SUCCESS (${appCheck.roll} ≤ ${appCheck.needed}) → +1 to goods quality.</p>`;
             } else {
                 if (appCheck.roll % 2 === 1) {
                     appraisalAdjust = -1;
-                    voyageLogHtmlRef.value += `<p><strong>Appraisal Check${useAgent ? ' (Agent)' : ''}:</strong> FAILED (${appCheck.roll} > ${appCheck.needed}, odd roll) → -1 to goods quality.</p>`;
+                    voyageLogHtmlRef.value += `<p><strong>Appraisal${usingPortAgent ? ' (Agent)' : ''}:</strong> FAILED (${appCheck.roll} > ${appCheck.needed}, odd) → -1 to goods quality.</p>`;
                 } else {
-                    voyageLogHtmlRef.value += `<p><strong>Appraisal Check${useAgent ? ' (Agent)' : ''}:</strong> FAILED (${appCheck.roll} > ${appCheck.needed}, even roll) → no penalty.</p>`;
+                    voyageLogHtmlRef.value += `<p><strong>Appraisal${usingPortAgent ? ' (Agent)' : ''}:</strong> FAILED (${appCheck.roll} > ${appCheck.needed}, even) → no penalty.</p>`;
                 }
             }
         }
@@ -136,29 +154,38 @@ export class CargoPurchasing {
 
         voyageLogHtmlRef.value += `<p><strong>Available Cargo:</strong> ${qtyAvailable} loads of ${determinedCargo.name} @ ${determinedCargo.baseValue} gp/load.</p>`;
 
-        // Apply Bargaining skill
+        // Apply Bargaining skill (use port agent if available)
         let bargainAdjustPercent = 0;
-        if (effectiveSkills.bargaining !== null) {
+        const bargainingScores = usingPortAgent ? portAgent.proficiencyScores : captainProficiencyScores;
+        
+        if (bargainingScores.bargaining !== null) {
             const bargainCheck = await ProficiencySystem.makeProficiencyCheck(
                 "bargaining",
-                effectiveSkills,
-                useAgent ? {} : lieutenantSkills,
-                useAgent ? 0 : crewQualityMod,
+                bargainingScores,
+                lieutenantSkills,
+                crewQualityMod,
                 0
             );
 
             if (bargainCheck.success) {
                 const successMargin = Math.clamp(bargainCheck.needed - bargainCheck.roll, 0, 5);
                 bargainAdjustPercent = -(successMargin * 5);
-                voyageLogHtmlRef.value += `<p><strong>Bargaining (Buy)${useAgent ? ' (Agent)' : ''}:</strong> SUCCESS (margin: ${successMargin}) → ${Math.abs(bargainAdjustPercent)}% discount.</p>`;
+                voyageLogHtmlRef.value += `<p><strong>Bargaining${usingPortAgent ? ' (Agent)' : ''}:</strong> SUCCESS (${bargainCheck.roll} ≤ ${bargainCheck.needed}) → ${Math.abs(bargainAdjustPercent)}% discount.</p>`;
             } else {
                 const failureMargin = Math.clamp(bargainCheck.roll - bargainCheck.needed, 0, 5);
                 bargainAdjustPercent = (failureMargin * 5);
-                voyageLogHtmlRef.value += `<p><strong>Bargaining (Buy)${useAgent ? ' (Agent)' : ''}:</strong> FAILED (margin: ${failureMargin}) → +${bargainAdjustPercent}% penalty.</p>`;
+                voyageLogHtmlRef.value += `<p><strong>Bargaining${usingPortAgent ? ' (Agent)' : ''}:</strong> FAILED (${bargainCheck.roll} > ${bargainCheck.needed}) → +${bargainAdjustPercent}% penalty.</p>`;
             }
         }
 
         purchasePricePerLoad = Math.max(1, Math.floor(determinedCargo.baseValue * (100 + bargainAdjustPercent) / 100));
+        
+        // Deduct port agent fee if used
+        let agentFee = 0;
+        if (usingPortAgent) {
+            const transactionValue = purchasePricePerLoad * Math.min(shipCapacity, qtyAvailable);
+            agentFee = PortAgentSystem.calculateFee(transactionValue, portAgent.feePercent);
+        }
 
         // Automated or manual purchase decision
         if (automateTrading) {
@@ -170,31 +197,23 @@ export class CargoPurchasing {
                 totalPurchaseCost = purchasePricePerLoad * purchasedLoads;
             }
 
-            // Calculate and apply agent fee
-            if (useAgent && purchasedLoads > 0) {
-                agentFee = PortAgentSystem.calculateFee(totalPurchaseCost, agent.feePercent);
-                if (totalPurchaseCost + agentFee > treasury) {
-                    // Reduce purchase to afford fee
-                    purchasedLoads = Math.floor((treasury) / (purchasePricePerLoad * (1 + agent.feePercent / 100)));
-                    totalPurchaseCost = purchasePricePerLoad * purchasedLoads;
-                    agentFee = PortAgentSystem.calculateFee(totalPurchaseCost, agent.feePercent);
-                }
-            }
-
             if (purchasedLoads > 0) {
-                treasury -= (totalPurchaseCost + agentFee);
-                let logMsg = `<p><strong>Automated Purchase:</strong> Bought ${purchasedLoads} loads @ ${purchasePricePerLoad} gp/load (Total: ${totalPurchaseCost} gp)`;
-                if (agentFee > 0) logMsg += ` + Agent Fee: ${agentFee} gp`;
-                logMsg += `.</p>`;
-                voyageLogHtmlRef.value += logMsg;
+                treasury -= totalPurchaseCost;
                 
+                // Deduct port agent fee if used
+                if (usingPortAgent && agentFee > 0) {
+                    const actualAgentFee = PortAgentSystem.calculateFee(totalPurchaseCost, portAgent.feePercent);
+                    treasury -= actualAgentFee;
+                    voyageLogHtmlRef.value += `<p><strong>Port Agent Fee:</strong> ${actualAgentFee} gp (${portAgent.feePercent}% of ${totalPurchaseCost} gp)</p>`;
+                }
+                
+                voyageLogHtmlRef.value += `<p><strong>Automated Purchase:</strong> Bought ${purchasedLoads} loads @ ${purchasePricePerLoad} gp/load (Total: ${totalPurchaseCost} gp).</p>`;
                 currentPortActivity.trading = {
                     type: "purchase",
                     cargoType: determinedCargo.name,
                     loads: purchasedLoads,
                     pricePerLoad: purchasePricePerLoad,
-                    totalCost: totalPurchaseCost,
-                    agentFee
+                    totalCost: totalPurchaseCost
                 };
             }
         } else {
@@ -210,7 +229,6 @@ export class CargoPurchasing {
                         at <strong>${purchasePricePerLoad} gp/load</strong>.</p>
                         <p>You have <strong>${treasury} gp</strong>. 
                         Ship capacity: <strong>${shipCapacity} loads</strong>.</p>
-                        ${useAgent ? `<p><em>Agent fee: ${agent.feePercent}% of purchase</em></p>` : ''}
                         <p>How many loads to buy? (Max: ${maxPurchasable})</p>
                         <input type="number" id="loadsToBuy" min="0" max="${maxPurchasable}" 
                                value="${maxPurchasable}" style="width: 100%;">
@@ -222,19 +240,18 @@ export class CargoPurchasing {
                                 let numLoads = parseInt(html.find("#loadsToBuy").val()) || 0;
                                 numLoads = Math.clamp(numLoads, 0, maxPurchasable);
                                 const cost = numLoads * purchasePricePerLoad;
-                                const fee = useAgent ? PortAgentSystem.calculateFee(cost, agent.feePercent) : 0;
                                 
-                                if (cost + fee > treasury) {
+                                if (cost > treasury) {
                                     ui.notifications.error("Insufficient funds!");
-                                    resolve({ loads: 0, cost: 0, fee: 0, action: "insufficient_funds" });
+                                    resolve({ loads: 0, cost: 0, action: "insufficient_funds" });
                                 } else {
-                                    resolve({ loads: numLoads, cost: cost, fee: fee, action: "buy" });
+                                    resolve({ loads: numLoads, cost: cost, action: "buy" });
                                 }
                             }
                         },
                         done: {
                             label: "Done Trading",
-                            callback: () => resolve({ loads: 0, cost: 0, fee: 0, action: "done" })
+                            callback: () => resolve({ loads: 0, cost: 0, action: "done" })
                         }
                     },
                     default: "buy"
@@ -244,21 +261,22 @@ export class CargoPurchasing {
             if (playerDecision.action === "buy" && playerDecision.loads > 0) {
                 purchasedLoads = playerDecision.loads;
                 totalPurchaseCost = playerDecision.cost;
-                agentFee = playerDecision.fee;
-                treasury -= (totalPurchaseCost + agentFee);
-
-                let logMsg = `<p><strong>Manual Purchase:</strong> Bought ${purchasedLoads} loads @ ${purchasePricePerLoad} gp/load (Total: ${totalPurchaseCost} gp)`;
-                if (agentFee > 0) logMsg += ` + Agent Fee: ${agentFee} gp`;
-                logMsg += `.</p>`;
-                voyageLogHtmlRef.value += logMsg;
+                treasury -= totalPurchaseCost;
                 
+                // Deduct port agent fee if used
+                if (usingPortAgent && agentFee > 0) {
+                    const actualAgentFee = PortAgentSystem.calculateFee(totalPurchaseCost, portAgent.feePercent);
+                    treasury -= actualAgentFee;
+                    voyageLogHtmlRef.value += `<p><strong>Port Agent Fee:</strong> ${actualAgentFee} gp (${portAgent.feePercent}% of ${totalPurchaseCost} gp)</p>`;
+                }
+
+                voyageLogHtmlRef.value += `<p><strong>Manual Purchase:</strong> Bought ${purchasedLoads} loads @ ${purchasePricePerLoad} gp/load (Total: ${totalPurchaseCost} gp).</p>`;
                 currentPortActivity.trading = {
                     type: "purchase",
                     cargoType: determinedCargo.name,
                     loads: purchasedLoads,
                     pricePerLoad: purchasePricePerLoad,
-                    totalCost: totalPurchaseCost,
-                    agentFee
+                    totalCost: totalPurchaseCost
                 };
             }
 
@@ -268,7 +286,6 @@ export class CargoPurchasing {
                 loadsBought: purchasedLoads,
                 purchasePricePerLoad: purchasePricePerLoad,
                 totalPurchaseCost: totalPurchaseCost,
-                agentFee,
                 additionalDays: 0,
                 action: playerDecision.action
             };
@@ -280,39 +297,8 @@ export class CargoPurchasing {
             loadsBought: purchasedLoads,
             purchasePricePerLoad: purchasePricePerLoad,
             totalPurchaseCost: totalPurchaseCost,
-            agentFee,
             additionalDays: 0
         };
-    }
-
-    static async offerAgentChoice(portName, profScores) {
-        const hasBargaining = profScores.bargaining !== null;
-        const hasAppraisal = profScores.appraisal !== null;
-        
-        return new Promise((resolve) => {
-            new Dialog({
-                title: `Port Agent - ${portName}`,
-                content: `
-                    <p>A port agent offers to handle cargo negotiations.</p>
-                    <p><strong>Agent Benefits:</strong></p>
-                    <ul>
-                        <li>Skilled in Bargaining & Appraisal</li>
-                        <li>No need for available merchants</li>
-                    </ul>
-                    <p><strong>Agent Costs:</strong></p>
-                    <ul>
-                        <li>Fee: 7-25% of transaction</li>
-                        <li>-1 demand modifier on sales</li>
-                    </ul>
-                    <p><em>Your skills: Bargaining ${hasBargaining ? '✓' : '✗'}, Appraisal ${hasAppraisal ? '✓' : '✗'}</em></p>
-                `,
-                buttons: {
-                    hire: { label: "Hire Agent", callback: () => resolve(true) },
-                    decline: { label: "Handle Myself", callback: () => resolve(false) }
-                },
-                default: "decline"
-            }).render(true);
-        });
     }
 
     /**

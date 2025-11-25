@@ -1,18 +1,31 @@
+/**
+ * Cargo Selling System
+ * Handles selling cargo at ports
+ */
+
 import { CargoRegistry } from '../data/cargo.js';
 import { PortRegistry } from '../data/ports.js';
 import { ProficiencySystem } from './proficiency.js';
 import { CargoPerishability } from './perishability.js';
 import { PortAgentSystem } from './port-agent.js';
 
+/**
+ * Calculate transport fee for consignment cargo
+ * Rules: 40 gp per ton (2 loads) per 500 miles, minimum 100 gp
+ */
 function calculateTransportFee(loads, distanceMiles) {
-    const tons = loads / 2;
-    const segments = Math.ceil(distanceMiles / 500);
+    const tons = loads / 2; // 2 loads = 1 ton
+    const segments = Math.ceil(distanceMiles / 500); // How many 500-mile segments
     const fee = tons * 40 * segments;
-    return Math.max(fee, 100);
+    
+    return Math.max(fee, 100); // Minimum 100 gp
 }
 
 export class CargoSelling {
 
+    /**
+     * Handle cargo sale at a port
+     */
     static async handleCargoSale(params) {
         const {
             portId,
@@ -32,35 +45,55 @@ export class CargoSelling {
             crewEarningsFromTrade
         } = params;
 
-        const port = PortRegistry.get(portId);
-        const portName = port.name;
-        const portSize = port.size;
+        const portName = PortRegistry.get(portId).name;
+        const portSize = PortRegistry.get(portId).size;
         const portSizeMod = PortRegistry.getSizeModifier(portSize);
 
         let newTreasury = currentTreasury;
         let newCrewEarningsFromTrade = crewEarningsFromTrade;
-
-        // Check for port agent usage
-        let useAgent = false;
-        let agent = null;
-        let agentFee = 0;
-        const agentAvailable = PortAgentSystem.isAvailable(portSize);
-
-        if (automateTrading) {
-            useAgent = PortAgentSystem.shouldAutoHire(captainProficiencyScores, portSize);
-            if (useAgent) {
-                agent = await PortAgentSystem.generateAgent();
-                voyageLogHtmlRef.value += `<p><strong>Port Agent Hired (Sale):</strong> Skill ${agent.skillScore}, Fee ${agent.feePercent}%</p>`;
-            }
-        } else if (agentAvailable) {
-            useAgent = await this.offerAgentChoice(portName, captainProficiencyScores, "sell");
-            if (useAgent) {
-                agent = await PortAgentSystem.generateAgent();
-                voyageLogHtmlRef.value += `<p><strong>Port Agent Hired (Sale):</strong> Skill ${agent.skillScore}, Fee ${agent.feePercent}%</p>`;
+        
+        // Check for port agent availability
+        let usingPortAgent = false;
+        let portAgent = null;
+        const port = PortRegistry.get(portId);
+        
+        if (PortAgentSystem.isAvailable(port.size)) {
+            const shouldAutoHire = PortAgentSystem.shouldAutoHire(captainProficiencyScores, port.size);
+            
+            if (shouldAutoHire) {
+                portAgent = await PortAgentSystem.generateAgent();
+                usingPortAgent = true;
+                voyageLogHtmlRef.value += `<p><strong>Port Agent Hired:</strong> Skill ${portAgent.skillScore}, Fee ${portAgent.feePercent}%</p>`;
+                currentPortActivity.activities.push(`Hired port agent for sale (skill ${portAgent.skillScore}, fee ${portAgent.feePercent}%)`);
+            } else if (!automateTrading) {
+                // Manual mode: offer port agent
+                portAgent = await PortAgentSystem.generateAgent();
+                
+                const agentChoice = await new Promise((resolve) => {
+                    new Dialog({
+                        title: "Port Agent Available",
+                        content: `
+                            <p>Hire a port agent to handle the sale?</p>
+                            <p><strong>Agent Skills:</strong> Bargaining ${portAgent.skillScore}, Appraisal ${portAgent.skillScore}</p>
+                            <p><strong>Fee:</strong> ${portAgent.feePercent}% of sale proceeds</p>
+                            <p><strong>Penalty:</strong> -1 to demand roll</p>
+                            <p><strong>Your Skills:</strong> Bargaining ${captainProficiencyScores.bargaining || 'none'}, Appraisal ${captainProficiencyScores.appraisal || 'none'}</p>
+                        `,
+                        buttons: {
+                            hire: { label: "Hire Agent", callback: () => resolve(true) },
+                            skip: { label: "No Thanks", callback: () => resolve(false) }
+                        },
+                        default: "skip"
+                    }).render(true);
+                });
+                
+                if (agentChoice) {
+                    usingPortAgent = true;
+                    voyageLogHtmlRef.value += `<p><strong>Port Agent Hired:</strong> Skill ${portAgent.skillScore}, Fee ${portAgent.feePercent}%</p>`;
+                    currentPortActivity.activities.push(`Hired port agent for sale (skill ${portAgent.skillScore}, fee ${portAgent.feePercent}%)`);
+                }
             }
         }
-
-        const effectiveSkills = useAgent ? agent.proficiencyScores : captainProficiencyScores;
 
         // Customs delay
         const cDelayRoll = new Roll("1d6");
@@ -82,15 +115,17 @@ export class CargoSelling {
         const baseCargoValue = CargoRegistry.get(currentCargoType).baseValue * currentLoads;
         const estimatedTax = Math.floor(baseCargoValue * (baseTaxPercent / 100));
 
-        // Decide whether to attempt smuggling (only captain can smuggle, not agent)
-        if (!useAgent && captainProficiencyScores.smuggling !== null && captainProficiencyScores.smuggling > 0) {
+        // Decide whether to attempt smuggling
+        if (captainProficiencyScores.smuggling !== null && captainProficiencyScores.smuggling > 0) {
             if (automateTrading) {
+                // Auto-decide: only smuggle if high proficiency AND high tax
                 attemptSmuggling = (captainProficiencyScores.smuggling >= 12 && estimatedTax > 500);
                 
                 if (attemptSmuggling) {
                     voyageLogHtmlRef.value += `<p><em>Captain decides to attempt smuggling (tax would be: ${estimatedTax} gp, proficiency: ${captainProficiencyScores.smuggling})</em></p>`;
                 }
             } else {
+                // Manual mode - ask player
                 attemptSmuggling = await this.offerSmugglingChoice(portName, captainProficiencyScores);
             }
         }
@@ -111,20 +146,21 @@ export class CargoSelling {
                 finalSmugglingNote = "Successfully avoided customs inspection";
                 voyageLogHtmlRef.value += `<p><strong>Smuggling SUCCESS:</strong> No customs fees!</p>`;
             } else {
+                // Failed smuggling = 10x penalty
                 finalTaxAmount = estimatedTax * 10;
                 finalTaxPercent = baseTaxPercent * 10;
                 finalSmugglingNote = `Smuggling failed - ${finalTaxPercent}% fine`;
                 voyageLogHtmlRef.value += `<p><strong>Smuggling FAILED:</strong> ${finalTaxPercent}% fine (${finalTaxAmount} gp)!</p>`;
             }
         } else {
+            // Normal customs processing with appraisal
             const cargoValue = await this.processCustomsAppraisal(
                 currentCargoType,
                 currentLoads,
-                effectiveSkills,
-                useAgent ? {} : lieutenantSkills,
-                useAgent ? 0 : crewQualityMod,
-                voyageLogHtmlRef,
-                useAgent
+                captainProficiencyScores,
+                lieutenantSkills,
+                crewQualityMod,
+                voyageLogHtmlRef
             );
             finalTaxPercent = baseTaxPercent;
             finalTaxAmount = Math.floor(cargoValue * (finalTaxPercent / 100));
@@ -132,18 +168,17 @@ export class CargoSelling {
         }
 
         // Calculate sale price with all modifiers (includes distance roll)
-        // Agent imposes -1 demand penalty
         let saleResult = await this.calculateSalePrice(
             currentCargoType,
             currentLoads,
             portSize,
             portSizeMod,
             distanceTraveled,
-            effectiveSkills,
-            useAgent ? {} : lieutenantSkills,
-            useAgent ? 0 : crewQualityMod,
+            usingPortAgent ? portAgent.proficiencyScores : captainProficiencyScores,
+            lieutenantSkills,
+            crewQualityMod,
             voyageLogHtmlRef,
-            useAgent // agentPenalty flag
+            usingPortAgent
         );
 
         // Check perishability using the same distance roll from sale calculation
@@ -159,6 +194,7 @@ export class CargoSelling {
             );
             
             if (!perishResult.success || perishResult.loadsRemaining === 0) {
+                // All cargo spoiled - return early
                 return {
                     newTreasury: currentTreasury,
                     newCrewEarningsFromTrade: crewEarningsFromTrade,
@@ -169,20 +205,16 @@ export class CargoSelling {
             }
             
             if (perishResult.loadsLost > 0) {
+                // Some cargo spoiled - recalculate sale value with remaining loads
                 actualLoads = perishResult.loadsRemaining;
                 actualPurchaseCost = Math.floor(currentPurchaseCost * (actualLoads / currentLoads));
                 
+                // Recalculate total sale value with remaining loads
                 saleResult = {
                     ...saleResult,
                     totalSaleValue: saleResult.pricePerLoad * actualLoads
                 };
             }
-        }
-
-        // Calculate agent fee on sale
-        if (useAgent) {
-            agentFee = PortAgentSystem.calculateFee(saleResult.totalSaleValue, agent.feePercent);
-            voyageLogHtmlRef.value += `<p><strong>Agent Fee (Sale):</strong> ${agentFee} gp (${agent.feePercent}% of ${saleResult.totalSaleValue} gp)</p>`;
         }
 
         // Handle profit distribution based on trade mode
@@ -191,47 +223,73 @@ export class CargoSelling {
         let crewDirectTradeEarnings = 0;
 
         if (tradeMode === "speculation") {
-            const cargoGrossProfit = saleResult.totalSaleValue - actualPurchaseCost - agentFee;
+            // SPECULATION MODE (Ship Owner)
+            // Rules: "A ship owner engages in speculation typically takes 50% of the profits, 
+            // with the remainder split in shares amongst the captain and crew."
+            
+            const cargoGrossProfit = saleResult.totalSaleValue - actualPurchaseCost;
             
             voyageLogHtmlRef.value += `<p><strong>Cargo Sale:</strong> ${actualLoads} loads @ ${saleResult.pricePerLoad} gp/load = ${saleResult.totalSaleValue} gp gross.</p>`;
             
             if (cargoGrossProfit > 0) {
+                // Owner gets 50% of profit, crew gets 50% of profit
                 const ownerProfitShare = Math.floor(cargoGrossProfit * 0.50);
-                const crewProfitShare = cargoGrossProfit - ownerProfitShare;
+                crewDirectTradeEarnings = Math.floor(cargoGrossProfit * 0.50);
                 
+                // Owner receives: original investment + their share of profit
                 totalSaleValueForOwner = actualPurchaseCost + ownerProfitShare;
-                crewDirectTradeEarnings = crewProfitShare;
-                newCrewEarningsFromTrade += crewProfitShare;
                 
-                voyageLogHtmlRef.value += `<p><strong>Speculation Profit:</strong> ${cargoGrossProfit} gp (Sale ${saleResult.totalSaleValue} - Cost ${actualPurchaseCost}${agentFee > 0 ? ` - Agent ${agentFee}` : ''})</p>`;
-                voyageLogHtmlRef.value += `<p><em>Owner: ${ownerProfitShare} gp (50%), Crew: ${crewProfitShare} gp (50%)</em></p>`;
+                voyageLogHtmlRef.value += `<p><strong>Speculation Profit:</strong> Gross profit ${cargoGrossProfit} gp. Owner receives ${totalSaleValueForOwner} gp (cost recovery + 50% profit). Crew earns ${crewDirectTradeEarnings} gp (50% profit).</p>`;
             } else {
-                totalSaleValueForOwner = saleResult.totalSaleValue - agentFee;
-                voyageLogHtmlRef.value += `<p><strong>Speculation Loss:</strong> ${Math.abs(cargoGrossProfit)} gp</p>`;
+                // Loss or break-even - owner gets sale value, crew gets nothing
+                crewDirectTradeEarnings = 0;
+                totalSaleValueForOwner = saleResult.totalSaleValue;
+                
+                voyageLogHtmlRef.value += `<p><strong>Speculation Loss:</strong> Purchased for ${actualPurchaseCost} gp, sold for ${saleResult.totalSaleValue} gp. Loss: ${Math.abs(cargoGrossProfit)} gp. Owner receives ${totalSaleValueForOwner} gp.</p>`;
             }
-        } else if (tradeMode === "consignment") {
-            const commissionAmount = Math.floor(saleResult.totalSaleValue * (commissionRate / 100));
-            const crewCommissionShare = Math.floor(commissionAmount * 0.40);
-            const ownerCommissionShare = commissionAmount - crewCommissionShare;
             
-            totalSaleValueToConsignor = saleResult.totalSaleValue - commissionAmount;
-            totalSaleValueForOwner = ownerCommissionShare;
-            crewDirectTradeEarnings = crewCommissionShare;
-            newCrewEarningsFromTrade += crewCommissionShare;
+            newTreasury += totalSaleValueForOwner;
+            newCrewEarningsFromTrade += crewDirectTradeEarnings;
             
+        } else {
+            // CONSIGNMENT MODE
+            // Rules: "The captain or guild representative sells the cargo for the best possible price, 
+            // with 10-40% of the sale to the ship's crew."
+            
+            // Crew gets their commission (10-40% of sale, based on commissionRate setting)
+            const crewCommission = Math.floor(saleResult.totalSaleValue * (commissionRate / 100));
+            crewDirectTradeEarnings = crewCommission;
+            
+            // Consignor gets the rest
+            totalSaleValueToConsignor = saleResult.totalSaleValue - crewCommission;
+            
+            // Calculate transport fee: 40 gp per ton (2 loads) per 500 miles
+            // Get the distance for this leg (passed in as distanceTraveled)
             const transportFee = calculateTransportFee(currentLoads, distanceTraveled);
-            const deliveryPayment = Math.floor(transportFee / 2);
-            totalSaleValueForOwner += deliveryPayment;
             
-            voyageLogHtmlRef.value += `<p><strong>Consignment Sale:</strong> ${saleResult.totalSaleValue} gp</p>`;
-            voyageLogHtmlRef.value += `<p><strong>Commission (${commissionRate}%):</strong> ${commissionAmount} gp (Owner: ${ownerCommissionShare}, Crew: ${crewCommissionShare})</p>`;
-            voyageLogHtmlRef.value += `<p><strong>Transport Fee (delivery):</strong> ${deliveryPayment} gp</p>`;
+            // Owner receives second half of transport fee (first half was paid upfront)
+            const deliveryPayment = Math.floor(transportFee / 2);
+            totalSaleValueForOwner = deliveryPayment;
+            
+            voyageLogHtmlRef.value += `<p><strong>Transport Fee (delivery payment):</strong> ${deliveryPayment} gp (${transportFee} gp total for ${distanceTraveled} miles)</p>`;
+            
+            newTreasury += totalSaleValueForOwner;
+            newCrewEarningsFromTrade += crewDirectTradeEarnings;
         }
 
-        // Apply customs tax
-        newTreasury += totalSaleValueForOwner;
-        newTreasury -= finalTaxAmount;
+        // Deduct tax from owner's treasury
+        if (finalTaxAmount > 0) {
+            newTreasury -= finalTaxAmount;
+        }
+        
+        // Deduct port agent fee if used
+        if (usingPortAgent && portAgent) {
+            const agentFee = PortAgentSystem.calculateFee(saleResult.totalSaleValue, portAgent.feePercent);
+            newTreasury -= agentFee;
+            voyageLogHtmlRef.value += `<p><strong>Port Agent Fee:</strong> ${agentFee} gp (${portAgent.feePercent}% of ${saleResult.totalSaleValue} gp)</p>`;
+        }
 
+        // Log final treasury change summary
         const treasuryChange = newTreasury - currentTreasury;
         const changeSign = treasuryChange >= 0 ? '+' : '';
         voyageLogHtmlRef.value += `<p><strong>Treasury Update:</strong> ${currentTreasury} gp → ${newTreasury} gp (${changeSign}${treasuryChange} gp from this sale)</p>`;
@@ -248,12 +306,11 @@ export class CargoSelling {
             newCrewEarningsFromTrade,
             newTreasury,
             cargoType: currentCargoType,
-            agentFee,
             action: "sold"
         };
     }
 
-    static async processCustomsAppraisal(cargoType, loads, profScores, ltSkills, crewQualityMod, logRef, useAgent = false) {
+    static async processCustomsAppraisal(cargoType, loads, profScores, ltSkills, crewQualityMod, logRef) {
         const baseValue = CargoRegistry.get(cargoType).baseValue * loads;
         let adjustmentPercent = 0;
 
@@ -275,7 +332,7 @@ export class CargoSelling {
         return Math.max(0, Math.floor(baseValue * (100 + adjustmentPercent) / 100));
     }
 
-    static async calculateSalePrice(cargoType, loads, portSize, portSizeMod, distance, profScores, ltSkills, crewQualityMod, logRef, agentPenalty = false) {
+    static async calculateSalePrice(cargoType, loads, portSize, portSizeMod, distance, profScores, ltSkills, crewQualityMod, logRef, usingPortAgent = false) {
         // Demand modifier: 3d6 roll, modified +4 by successful Trade proficiency
         const dmRoll = new Roll("3d6");
         await dmRoll.evaluate();
@@ -284,29 +341,27 @@ export class CargoSelling {
         let tradeNote = "";
         
         // Trade proficiency modifies the demand ROLL by +4 (per rules)
-        // Note: agents don't have Trade skill
         if (profScores.trade !== null) {
             const tradeCheck = await ProficiencySystem.makeProficiencyCheck("trade", profScores, ltSkills, crewQualityMod, 0);
             if (tradeCheck.success) {
                 demandRollModified += 4;
                 tradeNote = " (Trade +4)";
             } else if (tradeCheck.roll % 2 === 1) {
-                demandRollModified -= 4;
+                demandRollModified -= 4; // Inverse on odd failure
                 tradeNote = " (Trade -4, odd fail)";
             }
         }
         
         let demandMod = this.getDemandModifier(demandRollModified);
         demandMod += portSizeMod;
-
-        // Agent penalty: -1 to demand
-        let agentNote = "";
-        if (agentPenalty) {
+        
+        // Port agent penalty: -1 to demand
+        if (usingPortAgent) {
             demandMod -= 1;
-            agentNote = " - Agent -1";
         }
 
-        // Distance modifier
+        // Distance modifier (d6 roll determines both price modifier AND perishability threshold)
+        // Per rules: Short (1-2, <80mi, -1), Medium (3-5, ≤250mi, 0), Long (6, ≤500mi, +2), Extraordinary (>500mi, +4)
         const distRoll = new Roll("1d6");
         await distRoll.evaluate();
         
@@ -314,6 +369,7 @@ export class CargoSelling {
         let distanceCategory = "Medium";
         let distanceThreshold = 250;
         
+        // Check for Extraordinary first (actual distance > 500 miles overrides roll)
         if (distance > 500) {
             distanceMod = +4;
             distanceCategory = "Extraordinary";
@@ -332,6 +388,7 @@ export class CargoSelling {
             distanceThreshold = 500;
         }
         
+        // Store for perishability check
         this._lastDistanceRoll = {
             roll: distRoll.total,
             category: distanceCategory,
@@ -339,29 +396,18 @@ export class CargoSelling {
             actualDistance: distance
         };
 
-        // Precious goods: 10% chance of Extraordinary (+4)
-        let preciousBonus = 0;
-        let preciousNote = "";
-        if (cargoType === "precious") {
-            const preciousRoll = new Roll("1d100");
-            await preciousRoll.evaluate();
-            if (preciousRoll.total <= 10) {
-                preciousBonus = 4;
-                preciousNote = " + Precious +4";
-            }
-        }
-
-        // Bargaining and Appraisal
+        // Bargaining and Appraisal: +1 to SA roll for success, -1 for odd failure (per rules)
+        // The margin-based 5% bonus applies to FINAL price, not SA roll
         let sellBargAdj = 0, sellAppAdj = 0;
-        let bargainMargin = 0;
+        let bargainMargin = 0, appraisalMargin = 0;
 
         if (profScores.bargaining !== null) {
             const check = await ProficiencySystem.makeProficiencyCheck("bargaining", profScores, ltSkills, crewQualityMod, 0);
             if (check.success) {
                 sellBargAdj = +1;
-                bargainMargin = Math.min(5, check.needed - check.roll);
+                bargainMargin = Math.min(5, check.needed - check.roll); // For final price bonus
             } else if (check.roll % 2 === 1) {
-                sellBargAdj = -1;
+                sellBargAdj = -1; // Inverse on odd failure
             }
         }
 
@@ -369,15 +415,16 @@ export class CargoSelling {
             const check = await ProficiencySystem.makeProficiencyCheck("appraisal", profScores, ltSkills, crewQualityMod, 0);
             if (check.success) {
                 sellAppAdj = +1;
+                appraisalMargin = Math.min(5, check.needed - check.roll);
             } else if (check.roll % 2 === 1) {
-                sellAppAdj = -1;
+                sellAppAdj = -1; // Inverse on odd failure
             }
         }
 
         // Calculate SA roll
         const saRoll = new Roll("3d6");
         await saRoll.evaluate();
-        let saBase = saRoll.total + demandMod + distanceMod + preciousBonus + sellBargAdj + sellAppAdj;
+        let saBase = saRoll.total + demandMod + distanceMod + sellBargAdj + sellAppAdj;
 
         // Penalty for no trading skills
         let noSkillsPenalty = 0;
@@ -389,13 +436,15 @@ export class CargoSelling {
         const saPercent = CargoRegistry.getSaleAdjustment(saBase);
         const baseValue = CargoRegistry.get(cargoType).baseValue;
         
+        // Apply bargaining margin bonus to final price (5% per point, max 25%)
         const bargainBonus = Math.min(25, bargainMargin * 5);
         const finalPercent = Math.floor(saPercent * (100 + bargainBonus) / 100);
         
         const pricePerLoad = Math.max(1, Math.floor(baseValue * finalPercent / 100));
         const totalValue = pricePerLoad * loads;
 
-        logRef.value += `<p><em>Sale Price Calc: SA Roll ${saRoll.total} + Demand ${demandMod}${tradeNote}${agentNote} + Distance ${distanceMod} (${distanceCategory})${preciousNote} + Barg ${sellBargAdj} + App ${sellAppAdj}${noSkillsPenalty ? ' - 2 (no skills)' : ''} = ${saBase} → ${saPercent}%${bargainBonus > 0 ? ` (+${bargainBonus}% bargain bonus) = ${finalPercent}%` : ''} of ${baseValue} gp = ${pricePerLoad} gp/load</em></p>`;
+        // Log the SA calculation for debugging
+        logRef.value += `<p><em>Sale Price Calc: SA Roll ${saRoll.total} + Demand ${demandMod}${tradeNote} + Distance ${distanceMod} (${distanceCategory}) + Barg ${sellBargAdj} + App ${sellAppAdj}${noSkillsPenalty ? ' - 2 (no skills)' : ''} = ${saBase} → ${saPercent}%${bargainBonus > 0 ? ` (+${bargainBonus}% bargain bonus) = ${finalPercent}%` : ''} of ${baseValue} gp = ${pricePerLoad} gp/load</em></p>`;
 
         return { 
             pricePerLoad, 
@@ -416,28 +465,6 @@ export class CargoSelling {
         if (roll === 15) return +3;
         if (roll <= 17) return +4;
         return +5;
-    }
-
-    static async offerAgentChoice(portName, profScores, mode) {
-        const hasBargaining = profScores.bargaining !== null;
-        const hasAppraisal = profScores.appraisal !== null;
-        
-        return new Promise((resolve) => {
-            new Dialog({
-                title: `Port Agent - ${portName}`,
-                content: `
-                    <p>A port agent offers to handle the ${mode}.</p>
-                    <p><strong>Agent Benefits:</strong> Skilled Bargaining & Appraisal</p>
-                    <p><strong>Agent Costs:</strong> Fee 7-25%${mode === 'sell' ? ', -1 demand' : ''}</p>
-                    <p><em>Your skills: Bargaining ${hasBargaining ? '✓' : '✗'}, Appraisal ${hasAppraisal ? '✓' : '✗'}</em></p>
-                `,
-                buttons: {
-                    hire: { label: "Hire Agent", callback: () => resolve(true) },
-                    decline: { label: "Handle Myself", callback: () => resolve(false) }
-                },
-                default: "decline"
-            }).render(true);
-        });
     }
 
     static async offerSmugglingChoice(portName, profScores) {

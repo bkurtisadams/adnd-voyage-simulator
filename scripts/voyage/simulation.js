@@ -13,7 +13,10 @@ import { CargoSelling } from '../trading/cargo-sell.js';
 import { CargoOperations } from '../trading/cargo-operations.js';
 import { TradingStrategy } from '../trading/trading-strategy.js';
 import { ReportGenerator } from '../journal/report-generator.js';
-import { TransportHireSystem } from '../trading/transport-hire.js';
+import { ShipRepairSystem } from './ship-repair.js';
+import { CrewHiringSystem } from './crew-hiring.js';
+import { MerchantTimingSystem } from '../trading/merchant-timing.js';
+import { PortAgentSystem } from '../trading/port-agent.js';
 
 export class VoyageSimulator {
   /** Persist active voyages in a single world setting */
@@ -397,17 +400,17 @@ export class VoyageSimulator {
       state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp (Entrance: ${portFees.entrance} gp, Moorage: ${portFees.moorage.cost} gp [${portFees.moorage.type}], Pilot: ${portFees.pilot} gp)</p>`;
       state.portActivities.push(portActivity);
       
+      // Ship Repairs
+      await this.offerShipRepairs(state, originPort, portActivity);
+      
+      // Crew Hiring
+      await this.offerCrewHiring(state, originPort, portActivity);
+      
       if (state.tradeMode === "consignment") {
           await this.loadConsignmentCargo(state, portActivity);
       } else {
-          // Check for transport job first
-          const soliciting = true;
-          await this.checkTransportForHire(state, originID, portActivity, legs, -1, true);
-          
-          // If no transport job taken, buy cargo speculatively
-          if (state.currentCargo.loads === 0) {
-              await this.attemptStrategicPurchase(state, originID, portActivity, -1, legs);
-          }
+          // At origin, use strategy with all legs ahead
+          await this.attemptStrategicPurchase(state, originID, portActivity, -1, legs);
       }
   }
 
@@ -729,6 +732,12 @@ export class VoyageSimulator {
       state.voyageLogHtml.value += `<h3>Arrived at ${portName}</h3>`;
       state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp (Entrance: ${portFees.entrance} gp, Moorage: ${portFees.moorage.cost} gp [${portFees.moorage.type}], Pilot: ${portFees.pilot} gp)</p>`;
       
+      // Ship Repairs
+      await this.offerShipRepairs(state, port, portActivity);
+      
+      // Crew Hiring
+      await this.offerCrewHiring(state, port, portActivity);
+      
       // 4. Simulate Days in Port (Weather & Costs)
       for (let i = 0; i < daysInPort; i++) {
           this.advanceDay();
@@ -785,10 +794,7 @@ export class VoyageSimulator {
 
       state.portActivities.push(portActivity);
       
-      // 6. Handle Transport Job Delivery (if carrying one)
-      await this.handleTransportDelivery(state, portId, portActivity);
-      
-      // 7. Handle Cargo Trading with Strategy
+      // 6. Handle Cargo Trading with Strategy
       const isFinalPort = legIndex === allLegs.length - 1;
       const remainingLegs = allLegs.slice(legIndex + 1);
       
@@ -800,8 +806,8 @@ export class VoyageSimulator {
           }
       }
       
-      // Selling decision (skip if transport job - must deliver to destination)
-      if (state.currentCargo.loads > 0 && state.tradeMode === "speculation" && !state.currentCargo.isTransportJob) {
+      // Selling decision
+      if (state.currentCargo.loads > 0 && state.tradeMode === "speculation") {
           const distanceToNext = remainingLegs[0]?.distance || 0;
           const sellEval = TradingStrategy.evaluateSale({
               cargoType: state.currentCargo.type,
@@ -822,13 +828,7 @@ export class VoyageSimulator {
           }
       }
       
-      // 8. Check for Transport for Hire offers (before buying)
-      if (state.currentCargo.loads === 0 && !isFinalPort) {
-          const soliciting = true; // Empty hold = actively seeking work
-          await this.checkTransportForHire(state, portId, portActivity, allLegs, legIndex, true);
-      }
-      
-      // Buying decision (only if no transport job accepted)
+      // Buying decision  
       if (state.tradeMode === "speculation" && state.currentCargo.loads === 0 && !isFinalPort) {
           await this.attemptStrategicPurchase(state, portId, portActivity, legIndex, allLegs);
       }
@@ -1039,6 +1039,129 @@ export class VoyageSimulator {
       portActivity.activities.push(`Received upfront transport payment: ${upfrontPayment} gp`);
   }
 
+  /* async offerShipRepairs(state, port, portActivity) {
+      const damage = state.ship.hullPoints.max - state.ship.hullPoints.value;
+      if (damage === 0) return;
+      
+      if (!ShipRepairSystem.canRepairAtPort(port.size)) {
+          state.voyageLogHtml.value += `<p><em>No repair facilities available at ${port.name} (Anchorage)</em></p>`;
+          return;
+      }
+      
+      // Check if captain/crew has Shipwright or Ship Carpentry
+      const hasProficiency = state.captainProficiencyScores?.shipwright || 
+                             state.captainProficiencyScores?.shipCarpentry ||
+                             state.lieutenantSkills?.shipwright ||
+                             state.lieutenantSkills?.shipCarpentry;
+      
+      let repairChoice;
+      if (state.automateTrading) {
+          repairChoice = ShipRepairSystem.shouldAutoRepair(
+              state.ship.hullPoints.value,
+              state.ship.hullPoints.max,
+              state.treasury
+          );
+      } else {
+          repairChoice = await ShipRepairSystem.offerRepairChoice(
+              state.ship.hullPoints.value,
+              state.ship.hullPoints.max,
+              state.treasury,
+              hasProficiency
+          );
+      }
+      
+      if (repairChoice) {
+          state.treasury -= repairChoice.cost;
+          state.expenseTotal += repairChoice.cost;
+          state.ship.hullPoints.value = state.ship.hullPoints.max;
+          
+          if (state.breakdown) state.breakdown.repairs = (state.breakdown.repairs || 0) + repairChoice.cost;
+          
+            this.recordLedgerEntry(state, this.getCurrentDate(), `Ship repairs at ${port.name}`, 0, repairChoice.cost);
+            
+            state.voyageLogHtml.value += `<p><strong>Ship Repaired:</strong> ${damage} hull points restored for ${repairChoice.cost} gp (${repairChoice.type})</p>`;
+            portActivity.activities.push(`Repaired ${damage} hull points (${repairChoice.type}): ${repairChoice.cost} gp`);
+        }
+    } */
+
+  async offerShipRepairs(state, port, portActivity) {
+      const damage = state.ship.hullPoints.max - state.ship.hullPoints.value;
+      if (damage === 0) return;
+      
+      if (!ShipRepairSystem.canRepairAtPort(port.size)) {
+          state.voyageLogHtml.value += `<p><em>No repair facilities available at ${port.name} (Anchorage)</em></p>`;
+          return;
+      }
+      
+      const hasProficiency = state.captainProficiencyScores?.shipwright || 
+                          state.captainProficiencyScores?.shipCarpentry ||
+                          state.lieutenantSkills?.shipwright ||
+                          state.lieutenantSkills?.shipCarpentry;
+      
+      let repairChoice;
+      if (state.automateTrading) {
+          repairChoice = ShipRepairSystem.shouldAutoRepair(
+              state.ship.hullPoints.value,
+              state.ship.hullPoints.max,
+              state.treasury
+          );
+          
+          // ADD THIS LOGGING:
+          if (!repairChoice) {
+              const damagePercent = Math.round((damage / state.ship.hullPoints.max) * 100);
+              const repairCost = damage * 100;
+              if (damagePercent < 10) {
+                  state.voyageLogHtml.value += `<p><em>Ship damage: ${damage} HP (${damagePercent}%), repairs deferred (minor damage)</em></p>`;
+              } else {
+                  state.voyageLogHtml.value += `<p><em>Ship damage: ${damage} HP (${damagePercent}%), repairs deferred (insufficient funds: need ${repairCost} gp)</em></p>`;
+              }
+          }
+      } else {
+          repairChoice = await ShipRepairSystem.offerRepairChoice(/*...*/);
+      }
+      
+      if (repairChoice) {
+          // ... existing repair code ...
+      }
+  }    
+
+  async offerCrewHiring(state, port, portActivity) {
+      // Define required crew based on ship template
+      const requiredCrew = state.ship.crew; // This should be the template crew from ship registry
+      const currentCrew = state.ship.crew; // This is the actual current crew
+      
+      const shortfall = CrewHiringSystem.calculateShortfall(currentCrew, requiredCrew);
+      
+      if (Object.keys(shortfall).length === 0) return;
+      
+      if (!CrewHiringSystem.canHireAtPort(port.size, "small")) {
+          state.voyageLogHtml.value += `<p><em>No crew available for hire at ${port.name}</em></p>`;
+          return;
+      }
+      
+      let hireChoice;
+      if (state.automateTrading) {
+          const shouldHire = CrewHiringSystem.shouldAutoHire(currentCrew, requiredCrew);
+          if (shouldHire) {
+              hireChoice = { hired: shortfall, totalMonthlyWages: Object.values(shortfall).reduce((sum, s) => sum + (s.cost * s.needed), 0) };
+          }
+      } else {
+          hireChoice = await CrewHiringSystem.offerHiringChoice(shortfall, state.treasury);
+      }
+      
+      if (hireChoice) {
+          CrewHiringSystem.applyHiredCrew(currentCrew, hireChoice.hired);
+          
+          state.voyageLogHtml.value += `<p><strong>Crew Hired:</strong> `;
+          for (const [role, data] of Object.entries(hireChoice.hired)) {
+              state.voyageLogHtml.value += `${data.needed} ${role}(s) @ ${data.cost} gp/month; `;
+          }
+          state.voyageLogHtml.value += `</p>`;
+          
+          portActivity.activities.push(`Hired replacement crew: ${JSON.stringify(hireChoice.hired)}`);
+      }
+  }
+
   getCurrentDate() {
       if (globalThis.dndWeather?.weatherSystem?.calendarTracker) {
           return globalThis.dndWeather.weatherSystem.calendarTracker.getDateString();
@@ -1230,139 +1353,4 @@ export class VoyageSimulator {
       } catch {}
     }
   }
-
-    async checkTransportForHire(state, portId, portActivity, legs, legIndex, solicited = false) {
-        const job = await TransportHireSystem.rollForJob(solicited);
-        
-        if (!job) {
-            if (solicited) {
-                state.voyageLogHtml.value += `<p><em>No transport jobs available despite solicitation.</em></p>`;
-            }
-            return null;
-        }
-        
-        const port = PortRegistry.get(portId);
-        state.voyageLogHtml.value += `<p><strong>Transport for Hire Offer:</strong> ${job.loads} loads of ${job.cargoName} to destination within ${job.maxDistance} miles (rolled ${job.roll} ≤ ${job.chance}%)</p>`;
-        
-        // Find valid destination within range
-        const validDestinations = this.findDestinationsWithinRange(legs, legIndex, job.maxDistance);
-        
-        if (validDestinations.length === 0) {
-            state.voyageLogHtml.value += `<p><em>No valid destinations within range.</em></p>`;
-            return null;
-        }
-        
-        // Pick most distant valid destination for best fee
-        const destination = validDestinations.reduce((best, curr) => 
-            curr.distance > best.distance ? curr : best
-        );
-        
-        const contract = TransportHireSystem.createContract(job, destination.portId, destination.distance);
-        
-        if (state.automateTrading) {
-            if (state.currentCargo.loads === 0) {
-                state.treasury += contract.upfrontPayment;
-                state.currentCargo = {
-                    type: contract.cargoType,
-                    loads: contract.loads,
-                    purchasePrice: 0,
-                    isTransportJob: true,
-                    contract: contract
-                };
-                state.voyageLogHtml.value += `<p><strong>Transport Job Accepted:</strong> ${contract.loads} loads to ${PortRegistry.get(contract.destinationPort).name} (${contract.distance} mi)</p>`;
-                state.voyageLogHtml.value += `<p><strong>Upfront Payment:</strong> ${contract.upfrontPayment} gp (${contract.deliveryPayment} gp on delivery)</p>`;
-                portActivity.activities.push(`Accepted transport job: ${contract.loads} loads, ${contract.totalFee} gp total`);
-                
-                this.recordLedgerEntry(state, this.getCurrentDate(), "Transport Hire (upfront)", contract.upfrontPayment, 0);
-                return contract;
-            } else {
-                state.voyageLogHtml.value += `<p><em>Declined transport job (cargo hold not empty).</em></p>`;
-                return null;
-            }
-        } else {
-            const accepted = await this.offerTransportJobChoice(contract, state.currentCargo.loads, state.ship.cargoCapacity);
-            
-            if (accepted) {
-                state.treasury += contract.upfrontPayment;
-                state.currentCargo = {
-                    type: contract.cargoType,
-                    loads: contract.loads,
-                    purchasePrice: 0,
-                    isTransportJob: true,
-                    contract: contract
-                };
-                state.voyageLogHtml.value += `<p><strong>Transport Job Accepted:</strong> ${contract.loads} loads to ${PortRegistry.get(contract.destinationPort).name}</p>`;
-                state.voyageLogHtml.value += `<p><strong>Upfront Payment:</strong> ${contract.upfrontPayment} gp</p>`;
-                portActivity.activities.push(`Accepted transport job: ${contract.loads} loads, ${contract.totalFee} gp total`);
-                
-                this.recordLedgerEntry(state, this.getCurrentDate(), "Transport Hire (upfront)", contract.upfrontPayment, 0);
-                return contract;
-            }
-            return null;
-        }
-    }
-
-    findDestinationsWithinRange(legs, currentLegIndex, maxDistance) {
-        const destinations = [];
-        let cumulativeDistance = 0;
-        
-        // Start from current position, check remaining legs
-        const startIndex = currentLegIndex < 0 ? 0 : currentLegIndex;
-        
-        for (let i = startIndex; i < legs.length; i++) {
-            cumulativeDistance += legs[i].distance;
-            if (cumulativeDistance <= maxDistance) {
-                destinations.push({
-                    portId: legs[i].toID,
-                    distance: cumulativeDistance
-                });
-            }
-        }
-        
-        return destinations;
-    }
-
-    async offerTransportJobChoice(contract, currentLoads, shipCapacity) {
-        const destPort = PortRegistry.get(contract.destinationPort);
-        
-        return new Promise((resolve) => {
-            new Dialog({
-                title: "Transport for Hire Offer",
-                content: `
-                    <p>A merchant offers to hire your ship:</p>
-                    <p><strong>Cargo:</strong> ${contract.loads} loads of ${contract.cargoName}</p>
-                    <p><strong>Destination:</strong> ${destPort.name} (${contract.distance} miles)</p>
-                    <p><strong>Payment:</strong> ${contract.totalFee} gp total</p>
-                    <ul>
-                        <li>Upfront: ${contract.upfrontPayment} gp</li>
-                        <li>On delivery: ${contract.deliveryPayment} gp</li>
-                    </ul>
-                    <p><em>Current cargo: ${currentLoads}/${shipCapacity} loads</em></p>
-                    ${currentLoads > 0 ? '<p><strong>Warning:</strong> You have cargo aboard!</p>' : ''}
-                `,
-                buttons: {
-                    accept: { label: "Accept Job", callback: () => resolve(true) },
-                    decline: { label: "Decline", callback: () => resolve(false) }
-                },
-                default: currentLoads === 0 ? "accept" : "decline"
-            }).render(true);
-        });
-    }
-
-    async handleTransportDelivery(state, portId, portActivity) {
-        if (!state.currentCargo.isTransportJob) return;
-        
-        const contract = state.currentCargo.contract;
-        if (contract.destinationPort !== portId) return;
-        
-        // Deliver cargo and receive payment
-        state.treasury += contract.deliveryPayment;
-        state.voyageLogHtml.value += `<p><strong>Transport Delivery Complete:</strong> Received ${contract.deliveryPayment} gp</p>`;
-        portActivity.activities.push(`Delivered transport cargo, received ${contract.deliveryPayment} gp`);
-        
-        this.recordLedgerEntry(state, this.getCurrentDate(), "Transport Hire (delivery)", contract.deliveryPayment, 0);
-        
-        // Clear cargo
-        state.currentCargo = { type: null, loads: 0, purchasePrice: 0 };
-    }
 }
