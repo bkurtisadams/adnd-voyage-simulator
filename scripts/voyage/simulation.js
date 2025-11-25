@@ -1143,8 +1143,17 @@ export class VoyageSimulator {
       }
       
       if (repairChoice) {
-          // ... existing repair code ...
-      }
+        state.treasury -= repairChoice.cost;
+        state.expenseTotal += repairChoice.cost;
+        state.ship.hullPoints.value = state.ship.hullPoints.max;
+        
+        if (state.breakdown) state.breakdown.repairs = (state.breakdown.repairs || 0) + repairChoice.cost;
+        
+        this.recordLedgerEntry(state, this.getCurrentDate(), `Ship repairs at ${port.name}`, 0, repairChoice.cost);
+        
+        state.voyageLogHtml.value += `<p><strong>Ship Repaired:</strong> ${damage} hull points restored for ${repairChoice.cost} gp (${repairChoice.type})</p>`;
+        portActivity.activities.push(`Repaired ${damage} hull points (${repairChoice.type}): ${repairChoice.cost} gp`);
+    }
   }    
 
   async offerCrewHiring(state, port, portActivity) {
