@@ -548,7 +548,8 @@ export class VoyageSimulator {
           "coastal": "SHALLOW",
           "openWater": "DEEP",
           "river": "FRESH",
-          "lake": "FRESH"
+          "lake": "INLAND_SEA",
+          "inlandSea": "INLAND_SEA"
       };
       return map[waterType] || "SHALLOW";
   }

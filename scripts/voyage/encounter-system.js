@@ -23,7 +23,12 @@ export class EncounterSystem {
         FRESH: { 
             checks: ["morning", "evening", "midnight"], 
             depth: "FRESH",
-            description: "Fresh water (river, lake)"
+            description: "Fresh water (river, small lake)"
+        },
+        INLAND_SEA: {
+            checks: ["dawn", "noon"],
+            depth: "INLAND_SEA",
+            description: "Large freshwater body (great lake, inland sea)"
         },
         COASTAL: { 
             checks: ["dawn", "noon"], 
@@ -79,23 +84,32 @@ export class EncounterSystem {
         }
 
         console.log(`EncounterSystem | ENCOUNTER! Rolling on ${depth} tables...`);
-        
-        // Determine frequency category (d100)
-        const frequencyRoll = new Roll("1d100");
-        await frequencyRoll.evaluate();
 
-        let category;
-        if (frequencyRoll.total <= 65) category = "COMMON";
-        else if (frequencyRoll.total <= 85) category = "UNCOMMON";
-        else if (frequencyRoll.total <= 97) category = "RARE";
-        else category = "VERY_RARE";
+        let encounter;
+        let category = null;
+        let frequencyTotal = null;
 
-        console.log(`EncounterSystem | Frequency roll: ${frequencyRoll.total} = ${category}`);
-        
-        // Get encounter from registry
-        const encounter = EncounterRegistry.rollEncounter(depth, category);
+        if (depth === "INLAND_SEA") {
+            // DMG table: single percentile-weighted table, no frequency bands
+            // Climate defaults to temperate (Nyr Dyv, Great Lakes style)
+            encounter = EncounterRegistry.rollEncounter("INLAND_SEA", null, "temperate");
+        } else {
+            // Seafaring tables: determine frequency category (d100)
+            const frequencyRoll = new Roll("1d100");
+            await frequencyRoll.evaluate();
+            frequencyTotal = frequencyRoll.total;
+
+            if (frequencyTotal <= 65) category = "COMMON";
+            else if (frequencyTotal <= 85) category = "UNCOMMON";
+            else if (frequencyTotal <= 97) category = "RARE";
+            else category = "VERY_RARE";
+
+            console.log(`EncounterSystem | Frequency roll: ${frequencyTotal} = ${category}`);
+            encounter = EncounterRegistry.rollEncounter(depth, category);
+        }
+
         if (!encounter) {
-            console.warn(`EncounterSystem | No encounter found for ${depth}/${category}`);
+            console.warn(`EncounterSystem | No encounter found for ${depth}/${category || 'weighted'}`);
             return null;
         }
         
@@ -125,7 +139,7 @@ export class EncounterSystem {
             encounter,
             category,
             classification,
-            frequencyRoll: frequencyRoll.total,
+            frequencyRoll: frequencyTotal,
             distance: effectiveDistance,
             distanceRaw: distanceInfo.distance,
             distanceType: distanceInfo.type,

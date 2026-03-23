@@ -1,6 +1,6 @@
-// encounters.js v2.0.0 - 2026-03-22
-// Full encounter tables from Seafaring rules supplement
-// Salt Water Shallow, Salt Water Deep, Fresh Water (mapped from lake/river)
+// encounters.js v2.1.0 - 2026-03-23
+// Full encounter tables from Seafaring rules + DMG waterborne encounters
+// Salt Water Shallow/Deep, Fresh Water (river/small lake), Inland Sea (DMG large body)
 // Includes Dinosaur, Island, Ghost Ship, and Other Encounters subtables
 
 export class EncounterRegistry {
@@ -12,6 +12,7 @@ export class EncounterRegistry {
         this.registerShallowTables();
         this.registerDeepTables();
         this.registerFreshTables();
+        this.registerInlandSeaTables();
         this.registerSubtables();
         this.registerEffects();
         console.log(`Encounter Registry | Registered ${this.tables.size} encounter tables, ${this.subtables.size} subtables`);
@@ -276,6 +277,41 @@ export class EncounterRegistry {
     }
 
     // =========================================================================
+    // INLAND SEA / LARGE FRESHWATER BODY (DMG Large Body of Water table)
+    // Check dawn + noon (sailed day and night like coastal)
+    // Uses DMG percentile-weighted table — rollEncounter uses weighted lookup
+    // Cool/temperate climate: warm-only creatures (crocodile, hippo, dinosaur)
+    // are re-rolled. Cool-only creatures (beaver, nixie) are valid.
+    // =========================================================================
+
+    static registerInlandSeaTables() {
+        // DMG Fresh Water — Large Body of Water (p.190)
+        // Each entry has minRoll/maxRoll for d100 weighted selection
+        this.tables.set('INLAND_SEA', [
+            { minRoll: 1, maxRoll: 2, name: "Beaver, giant", number: "d4+1", ac: 6, move: '6"//12"', hd: "4", thac0: 15, damage: "4d4", size: "L", inLair: 60, other: "Cool waters only", climate: "cool" },
+            { minRoll: 3, maxRoll: 4, name: "Crayfish, giant", number: "d4", ac: 4, move: '6"//12"', hd: "4+4", thac0: 15, damage: "2d6/2d6", size: "L", inLair: 0, other: "Surprise 3 in 6" },
+            { minRoll: 5, maxRoll: 6, name: "Crocodile", number: "3d8", ac: 5, move: '6"//12"', hd: "3", thac0: 16, damage: "2d4/d12", size: "L", inLair: 0, other: "Warm waters only. Surprise 3 in 6", climate: "warm", canSubmerge: true },
+            { minRoll: 7, maxRoll: 10, name: "Crocodile, giant", number: "d2", ac: 4, move: '6"/12"', hd: "7", thac0: 13, damage: "3d6/2d10", size: "L", inLair: 0, other: "Warm waters only. Surprise", climate: "warm", canSubmerge: true },
+            { minRoll: 11, maxRoll: 15, name: "Dinosaur", number: null, ac: null, move: null, hd: null, thac0: null, damage: null, size: null, inLair: 0, other: "See Dinosaur Subtable", type: "subtable", climate: "warm" },
+            { minRoll: 16, maxRoll: 21, name: "Gar, giant", number: "d3", ac: 4, move: '//30"', hd: "8", thac0: 12, damage: "5d4", size: "L", inLair: 0, other: null },
+            { minRoll: 22, maxRoll: 23, name: "Hippopotamus", number: "d8", ac: 6, move: '6"//12"', hd: "8", thac0: 12, damage: "3d4", size: "L", inLair: 0, other: "Warm waters only", climate: "warm" },
+            { minRoll: 24, maxRoll: 26, name: "Koalinth", number: "d20*10", ac: 5, move: '9"', hd: "1+1", thac0: 18, damage: "d8", size: "M", inLair: 25, other: "Leaders", canSubmerge: true },
+            { minRoll: 27, maxRoll: 28, name: "Kopoacinth", number: "2d8", ac: 5, move: '9"/15"', hd: "4+4", thac0: 15, damage: "d3/d3/d6/d4", size: "M", inLair: 20, other: "+1 or better", canSubmerge: true },
+            { minRoll: 29, maxRoll: 29, name: "Lacedon", number: "2d12", ac: 6, move: '9"', hd: "2", thac0: 16, damage: "d3/d3/d3", size: "M", inLair: 20, other: "Paralyze, Undead", canSubmerge: true },
+            { minRoll: 30, maxRoll: 33, name: "Lizard Man", number: "4d10", ac: "5(4)", move: '6"//12"', hd: "2+1", thac0: 16, damage: "d2/d2/d8", size: "M", inLair: 30, other: null, canSubmerge: true },
+            { minRoll: 34, maxRoll: 48, name: "Men, buccaneer", number: "5d6*10", ac: null, move: '12"', hd: "1", thac0: null, damage: "W", size: "M", inLair: 20, other: "Or warship", type: "ship", canBoard: true },
+            { minRoll: 49, maxRoll: 78, name: "Men, merchant", number: "5d6*10", ac: null, move: '12"', hd: "1", thac0: null, damage: "W", size: "M", inLair: 20, other: "80% carrying d100% cargo", type: "ship" },
+            { minRoll: 79, maxRoll: 84, name: "Men, pirate", number: null, ac: null, move: '12"', hd: "1", thac0: null, damage: "W", size: "M", inLair: 20, other: null, type: "ship", canBoard: true },
+            { minRoll: 85, maxRoll: 85, name: "Naga, water", number: "1", ac: 5, move: '9"//18"', hd: "7", thac0: 13, damage: "d4", size: "L", inLair: 60, other: "Poison spit 30', cleric spells" },
+            { minRoll: 86, maxRoll: 90, name: "Nixie", number: "d20*10", ac: 7, move: '6"//12"', hd: "1-1", thac0: 20, damage: "d4", size: "S", inLair: 100, other: "Cool waters only. Charm 10 victims", climate: "cool", canSubmerge: true },
+            { minRoll: 91, maxRoll: 93, name: "Otter, Giant", number: "d4+1", ac: 5, move: '9"//18"', hd: "5", thac0: 15, damage: "3d6", size: "L", inLair: 0, other: "Playful" },
+            { minRoll: 94, maxRoll: 97, name: "Pike, giant", number: "d2", ac: 5, move: '//36"', hd: "4", thac0: 15, damage: "4d4", size: "L", inLair: 0, other: null },
+            { minRoll: 98, maxRoll: 99, name: "Turtle, snapping, giant", number: "d4", ac: 0, move: '3"//6"', hd: "10", thac0: 10, damage: "5d4", size: "L", inLair: 0, other: null },
+            { minRoll: 100, maxRoll: 100, name: "Water Weird", number: "d3", ac: 4, move: '12"', hd: "3+3", thac0: 15, damage: "0", size: "L", inLair: 50, other: "Drowning" }
+        ]);
+    }
+
+    // =========================================================================
     // SUBTABLES
     // =========================================================================
 
@@ -461,11 +497,17 @@ export class EncounterRegistry {
 
     /**
      * Roll on a specific encounter table.
-     * @param {string} waterType - SHALLOW, DEEP, or FRESH
-     * @param {string} frequency - COMMON, UNCOMMON, RARE, VERY_RARE
+     * @param {string} waterType - SHALLOW, DEEP, FRESH, or INLAND_SEA
+     * @param {string} frequency - COMMON, UNCOMMON, RARE, VERY_RARE (ignored for INLAND_SEA)
+     * @param {string} climate - "cool", "warm", or "temperate" (default "temperate")
      * @returns {Object|null} encounter entry
      */
-    static rollEncounter(waterType = "SHALLOW", frequency = "COMMON") {
+    static rollEncounter(waterType = "SHALLOW", frequency = "COMMON", climate = "temperate") {
+        // INLAND_SEA uses a single DMG percentile-weighted table (no frequency bands)
+        if (waterType === "INLAND_SEA") {
+            return this._rollWeightedTable("INLAND_SEA", climate);
+        }
+
         const prefix = waterType === "FRESH" ? "FRESH" : `SALT_WATER_${waterType}`;
         const tableName = `${prefix}_${frequency}`;
         let table = this.getTable(tableName);
@@ -489,6 +531,36 @@ export class EncounterRegistry {
         }
 
         return entry;
+    }
+
+    /**
+     * Roll on a percentile-weighted table (DMG style with minRoll/maxRoll).
+     * Re-rolls entries whose climate requirement doesn't match.
+     * Max 10 re-rolls to prevent infinite loops.
+     */
+    static _rollWeightedTable(tableName, climate = "temperate", maxRetries = 10) {
+        const table = this.getTable(tableName);
+        if (!table || table.length === 0) return null;
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            const d100 = Math.floor(Math.random() * 100) + 1;
+            const entry = table.find(e => d100 >= e.minRoll && d100 <= e.maxRoll);
+            if (!entry) continue;
+
+            // Climate filter: "warm" entries re-roll in cool/temperate, "cool" re-roll in warm
+            if (entry.climate === "warm" && climate !== "warm") continue;
+            if (entry.climate === "cool" && climate === "warm") continue;
+
+            const result = { ...entry };
+            if (result.type === "subtable") {
+                result.subtableResult = this.rollSubtable(result.name);
+            }
+            return result;
+        }
+
+        // Exhausted retries — return a safe default (merchant)
+        const merchant = table.find(e => e.name.includes("merchant"));
+        return merchant ? { ...merchant } : null;
     }
 
     /**
