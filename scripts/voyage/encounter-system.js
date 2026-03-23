@@ -162,17 +162,23 @@ export class EncounterSystem {
     }
 
     /**
-     * Determine if creature can approach from underwater
+     * Determine if creature tactically approaches unseen underwater.
+     * Surface-dwelling sea life (whales, dolphins, sharks, etc.) are spotted
+     * at outdoor encounter range (6d4 × 10 yards). Only creatures that
+     * deliberately submerge to ambush use the short 6d4 yard distance.
+     * Uses canSubmerge flag from encounter data, falls back to name check.
      */
     static canCreatureSubmerge(encounter) {
+        if (encounter.canSubmerge !== undefined) return encounter.canSubmerge;
         const name = encounter.name.toLowerCase();
-        const submergeCreatures = [
-            "shark", "whale", "kraken", "squid", "octopus", "serpent", "snake",
-            "sahuagin", "merrow", "scrag", "troll", "turtle", "ray", "eel",
-            "seahorse", "sea lion", "fish", "barracuda", "urchin", "jellyfish",
-            "man-o-war", "elemental", "otter", "dolphin", "porpoise"
+        const tacticalSubmerge = [
+            "sahuagin", "merrow", "scrag", "troll", "sea hag",
+            "kraken", "aboleth", "kuo-toa", "locathah", "ixitxachitl",
+            "sea serpent", "elemental", "kopoacinth", "lacedon",
+            "merman", "koalinth", "lizard man", "triton", "dragon turtle",
+            "sea elf", "aquatic elf", "dragon, sea"
         ];
-        return submergeCreatures.some(c => name.includes(c));
+        return tacticalSubmerge.some(c => name.includes(c));
     }
 
     /**
@@ -294,19 +300,25 @@ export class EncounterSystem {
     }
 
     /**
-     * Classify encounter as threat/sighting/hazard/interactive
-     * Only large monsters, aerial creatures, and pirates are true threats to ships
+     * Classify encounter as threat/sighting/hazard/interactive/special
+     * Uses type field from encounter data when available
      */
     static classifyEncounter(encounter) {
+        // Check typed entries from encounter data first
+        if (encounter.type === "hazard") return "hazard";
+        if (encounter.type === "ship") return "interactive";
+        if (encounter.type === "subtable") return "interactive";
+        if (encounter.type === "special") return "interactive";
+
         const name = encounter.name.toLowerCase();
         const size = (encounter.size || "").toUpperCase();
 
-        const hazards = ["seaweed", "shoals", "whirlpool", "maelstrom", "ice", "reef"];
+        const hazards = ["seaweed", "shoals", "whirlpool", "maelstrom", "ice", "reef", "green slime"];
         if (hazards.some(h => name.includes(h))) {
             return "hazard";
         }
 
-        const interactiveEncounters = ["man, merchant", "ship", "island", "omen", "albatross", "merchant"];
+        const interactiveEncounters = ["man, merchant", "ship", "island", "omen", "albatross", "merchant", "sunken ship"];
         if (interactiveEncounters.some(e => name.includes(e))) {
             return "interactive";
         }
@@ -472,10 +484,13 @@ export class EncounterSystem {
         const name = encounter.name.toLowerCase();
         const size = (encounter.size || "").toUpperCase();
         
-        // Pirates and hostile ships
+        // Pirates and hostile ships - check canBoard flag or name
+        if (encounter.canBoard) {
+            return { canHarm: true, type: "pirate", canHarmCrew: true, canBoard: true, reason: "" };
+        }
         const pirateTypes = ["pirate", "buccaneer", "raider", "warship", "galley", "man, pirate"];
         if (pirateTypes.some(p => name.includes(p))) {
-            return { canHarm: true, type: "pirate", canHarmCrew: true, reason: "" };
+            return { canHarm: true, type: "pirate", canHarmCrew: true, canBoard: true, reason: "" };
         }
         
         // Aerial creatures that can attack ships
@@ -530,7 +545,7 @@ export class EncounterSystem {
         }
         
         if (canBoard && hasSignificantHD) {
-            return { canHarm: true, type: "boarding", canHarmCrew: true, reason: "" };
+            return { canHarm: true, type: "boarding", canHarmCrew: true, canBoard: true, reason: "" };
         }
         
         // Everything else cannot harm ships

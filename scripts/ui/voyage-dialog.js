@@ -1,6 +1,7 @@
 /**
  * Voyage Setup Dialog
  * Main dialog for configuring and starting voyages
+ * Supports multi-officer crew roster
  */
 
 import { ShipRegistry } from '../data/ships.js';
@@ -8,12 +9,102 @@ import { PortRegistry } from '../data/ports.js';
 import { RouteRegistry } from '../data/routes.js';
 import { VoyageSimulator } from '../voyage/simulation.js';
 import { CrewGenerator } from '../data/crew-generator.js';
+import { ProficiencySystem } from '../trading/proficiency.js';
+
+// Skill abbreviations for compact display
+const SKILL_ABBREV = {
+    bargaining: "Barg", appraisal: "Appr", trade: "Trade", smuggling: "Smug",
+    customsInspection: "Cust", seamanship: "Seam", shipCarpentry: "Carp",
+    navigation: "Nav", piloting: "Pilot", seaLore: "Lore", shipRowing: "Row",
+    shipSailing: "Sail", shipwright: "Wright", signaling: "Sig",
+    vesselIdentification: "VesID", boating: "Boat", artillerist: "Artil"
+};
 
 export class VoyageSetupDialog extends FormApplication {
 
     constructor(options = {}) {
         super({}, options);
         this.loadSavedSettings();
+        // Initialize officers from saved data or migrate from old format
+        this.officers = this.savedData.officers || [];
+        // Ensure every loaded officer has a skills object
+        for (const o of this.officers) {
+            if (!o.skills || typeof o.skills !== 'object') o.skills = {};
+        }
+        console.log(`[Voyage Dialog] Saved officers: ${this.officers.length}, savedData keys: ${Object.keys(this.savedData).join(', ')}`);
+        if (this.officers.length === 0) {
+            // Migrate from old captain/lieutenant format
+            if (this.savedData.captainName) {
+                console.log(`[Voyage Dialog] Migrating old captain: ${this.savedData.captainName}`);
+                this.officers.push({
+                    name: this.savedData.captainName,
+                    role: "Captain",
+                    level: 5,
+                    status: "healthy",
+                    str: this.savedData.str || 10,
+                    dex: this.savedData.dex || 10,
+                    con: this.savedData.con || 10,
+                    int: this.savedData.int || 10,
+                    wis: this.savedData.wis || 10,
+                    cha: this.savedData.cha || 10,
+                    skills: {
+                        bargaining: !!this.savedData.skillBargaining,
+                        appraisal: !!this.savedData.skillAppraisal,
+                        trade: !!this.savedData.skillTrade,
+                        smuggling: !!this.savedData.skillSmuggling,
+                        customsInspection: !!this.savedData.skillCustomsInspection,
+                        seamanship: !!this.savedData.skillSeamanship,
+                        shipCarpentry: !!this.savedData.skillShipCarpentry,
+                        navigation: !!this.savedData.skillNavigation,
+                        piloting: !!this.savedData.skillPiloting,
+                        seaLore: !!this.savedData.skillSeaLore,
+                        shipRowing: !!this.savedData.skillShipRowing,
+                        shipSailing: !!this.savedData.skillShipSailing,
+                        shipwright: !!this.savedData.skillShipwright,
+                        signaling: !!this.savedData.skillSignaling,
+                        vesselIdentification: !!this.savedData.skillVesselIdentification
+                    }
+                });
+            }
+            if (this.savedData.ltName) {
+                console.log(`[Voyage Dialog] Migrating old lieutenant: ${this.savedData.ltName}`);
+                this.officers.push({
+                    name: this.savedData.ltName,
+                    role: "Lieutenant",
+                    level: 3,
+                    status: "healthy",
+                    str: this.savedData.ltStr || 10,
+                    dex: this.savedData.ltDex || 10,
+                    con: this.savedData.ltCon || 10,
+                    int: this.savedData.ltInt || 10,
+                    wis: this.savedData.ltWis || 10,
+                    cha: this.savedData.ltCha || 10,
+                    skills: {
+                        bargaining: !!this.savedData.ltSkillBargaining,
+                        appraisal: !!this.savedData.ltSkillAppraisal,
+                        trade: !!this.savedData.ltSkillTrade,
+                        smuggling: !!this.savedData.ltSkillSmuggling,
+                        customsInspection: !!this.savedData.ltSkillCustomsInspection,
+                        seamanship: !!this.savedData.ltSkillSeamanship,
+                        shipCarpentry: !!this.savedData.ltSkillShipCarpentry,
+                        navigation: !!this.savedData.ltSkillNavigation,
+                        piloting: !!this.savedData.ltSkillPiloting,
+                        seaLore: !!this.savedData.ltSkillSeaLore,
+                        shipRowing: !!this.savedData.ltSkillShipRowing,
+                        shipSailing: !!this.savedData.ltSkillShipSailing,
+                        shipwright: !!this.savedData.ltSkillShipwright,
+                        signaling: !!this.savedData.ltSkillSignaling,
+                        vesselIdentification: !!this.savedData.ltSkillVesselIdentification
+                    }
+                });
+            }
+            // If still empty, generate a default captain
+            if (this.officers.length === 0) {
+                console.log(`[Voyage Dialog] No saved data found, generating default captain`);
+                this.officers.push(CrewGenerator.generate("Captain"));
+            }
+        }
+        console.log(`[Voyage Dialog] Final officers count: ${this.officers.length}`, this.officers);
     }
 
     static get defaultOptions() {
@@ -22,7 +113,7 @@ export class VoyageSetupDialog extends FormApplication {
             classes: ["adnd-voyage-simulator", "sheet"],
             title: "AD&D Voyage Simulator - Setup",
             template: "modules/adnd-voyage-simulator/templates/voyage-setup.hbs",
-            width: 720,
+            width: 780,
             height: "auto",
             tabs: [
                 { navSelector: ".tabs", contentSelector: ".sheet-body", initial: "voyage-details" }
@@ -37,14 +128,27 @@ export class VoyageSetupDialog extends FormApplication {
         this.savedData = game.settings.get('adnd-voyage-simulator', 'lastVoyageSettings') || {};
     }
 
+    _getSkillTags(skills) {
+        if (!skills) return [];
+        return Object.entries(skills)
+            .filter(([_, v]) => v)
+            .map(([k]) => SKILL_ABBREV[k] || k)
+            .slice(0, 6); // max 6 tags in summary
+    }
+
     async getData() {
         const data = await super.getData();
 
-        data.ships = ShipRegistry.getAll().map(ship => ({
+        data.namedShips = ShipRegistry.getAll().map(ship => ({
             id: ship.id,
-            name: `${ship.name} (${ship.shipType})`,
+            name: ship.name,
+            shipType: ship.shipType,
             selected: ship.id === this.savedData.shipID
         }));
+
+        const grouped = ShipRegistry.getTemplatesGrouped();
+        data.templatesDMG = grouped.dmg;
+        data.templatesSeafaring = grouped.seafaring;
 
         data.routes = RouteRegistry.getAll().map(route => ({
             id: route.id,
@@ -81,19 +185,15 @@ export class VoyageSetupDialog extends FormApplication {
         data.saved.startingYear = data.saved.startingYear || 569;
         data.saved.startingDay = data.saved.startingDay || 1;
 
-        data.captain = {
-          name: this.savedData.captainName || "",
-          rank: "Captain"
-        };
-        data.lieutenant = {
-          name: this.savedData.ltName || "",
-          rank: "Lieutenant"
-        };
- 
-        const actor = canvas.tokens.controlled[0]?.actor;
-        if (actor && !data.captain.name) {
-          data.captain.name = actor.name;
-        }
+        // Build officer display data — ensure skills always exists
+        data.officers = this.officers.map((o, idx) => ({
+            ...o,
+            skills: o.skills || {},
+            roleLower: (o.role || "lieutenant").toLowerCase(),
+            status: o.status || "healthy",
+            skillTags: this._getSkillTags(o.skills),
+            expanded: idx === 0 // first officer starts expanded
+        }));
 
         return data;
     }
@@ -104,62 +204,91 @@ export class VoyageSetupDialog extends FormApplication {
         html.find('input[name="tradeMode"]').change(this._onTradeModeChange.bind(this));
         html.find('#automateTrading').change(this._onAutomateToggle.bind(this));
         html.find('button[type="submit"]').click(this._onSubmit.bind(this));
-        
-        // Random Generator Listeners
-        html.find('.randomize-crew').click(this._onRandomizeCrew.bind(this));
+
+        // Crew roster listeners
+        html.find('.add-officer-btn').click(this._onAddOfficer.bind(this));
+        html.find('.officer-randomize').click(this._onRandomizeOfficer.bind(this));
+        html.find('.officer-expand').click(this._onToggleOfficerDetail.bind(this));
+        html.find('.officer-delete').click(this._onDeleteOfficer.bind(this));
     }
 
-    _onRandomizeCrew(event) {
+    // ---- Crew Roster Actions ----
+
+    _onAddOfficer(event) {
         event.preventDefault();
-        const type = event.currentTarget.dataset.type; // 'captain' or 'lieutenant'
-        const rank = type === 'captain' ? 'Captain' : 'Lieutenant';
-        
-        // Generate data
-        const generated = CrewGenerator.generate(rank);
-
-        // Populate Name
-        const nameField = type === 'captain' ? '#captainName' : '#lieutenantName';
-        this.element.find(nameField).val(generated.name);
-
-        // Populate Attributes
-        const attrPrefix = type === 'captain' ? '#' : '#lt';
-        const strId = type === 'captain' ? '#str' : '#ltStr'; // specialized due to handlebars logic/ids in template
-        const dexId = type === 'captain' ? '#dex' : '#ltDex';
-        const conId = type === 'captain' ? '#con' : '#ltCon';
-        const intId = type === 'captain' ? '#int' : '#ltInt';
-        const wisId = type === 'captain' ? '#wis' : '#ltWis';
-        const chaId = type === 'captain' ? '#cha' : '#ltCha';
-
-        this.element.find(strId).val(generated.str);
-        this.element.find(dexId).val(generated.dex);
-        this.element.find(conId).val(generated.con);
-        this.element.find(intId).val(generated.int);
-        this.element.find(wisId).val(generated.wis);
-        this.element.find(chaId).val(generated.cha);
-
-        // Populate Skills
-        // First clear all checkboxes for this tab
-        const skillPrefix = type === 'captain' ? '#skill' : '#ltSkill';
-        
-        // Uncheck all first
-        this.element.find(`div[data-tab="${type}-info"] input[type="checkbox"]`).prop('checked', false);
-
-        // Check generated skills
-        for (const [skill, hasSkill] of Object.entries(generated.skills)) {
-            if (hasSkill) {
-                // Construct ID: e.g. #skillBargaining or #ltSkillBargaining
-                // Ensure capitalization matches template IDs
-                const capitalizedSkill = skill.charAt(0).toUpperCase() + skill.slice(1);
-                const selector = `${skillPrefix}${capitalizedSkill}`;
-                this.element.find(selector).prop('checked', true);
-            }
-        }
+        const role = this.element.find('#addOfficerRole').val();
+        const officer = CrewGenerator.generate(role);
+        this._syncOfficersFromForm();
+        this.officers.push(officer);
+        this.render(true);
     }
+
+    _onRandomizeOfficer(event) {
+        event.preventDefault();
+        const index = parseInt(event.currentTarget.dataset.index);
+        this._syncOfficersFromForm();
+        const role = this.officers[index]?.role || "Lieutenant";
+        this.officers[index] = CrewGenerator.generate(role);
+        this.render(true);
+    }
+
+    _onToggleOfficerDetail(event) {
+        event.preventDefault();
+        const index = event.currentTarget.dataset.index;
+        const detail = this.element.find(`.officer-detail[data-detail="${index}"]`);
+        const icon = $(event.currentTarget).find('i');
+        detail.toggle();
+        icon.toggleClass('fa-chevron-down fa-chevron-up');
+    }
+
+    _onDeleteOfficer(event) {
+        event.preventDefault();
+        const index = parseInt(event.currentTarget.dataset.index);
+        this._syncOfficersFromForm();
+        this.officers.splice(index, 1);
+        this.render(true);
+    }
+
+    /** Read current officer values from the form back into this.officers */
+    _syncOfficersFromForm() {
+        const html = this.element;
+        const updated = [];
+        for (let i = 0; i < this.officers.length; i++) {
+            const o = { ...this.officers[i] };
+            const nameVal = html.find(`[name="officer_${i}_name"]`).val();
+            if (nameVal !== undefined) o.name = nameVal;
+
+            const roleVal = html.find(`[name="officer_${i}_role"]`).val();
+            if (roleVal) o.role = roleVal;
+
+            const lvl = html.find(`[name="officer_${i}_level"]`).val();
+            if (lvl !== undefined) o.level = parseInt(lvl) || 0;
+
+            const status = html.find(`[name="officer_${i}_status"]`).val();
+            if (status) o.status = status;
+
+            for (const attr of ['str', 'dex', 'con', 'int', 'wis', 'cha']) {
+                const v = html.find(`[name="officer_${i}_${attr}"]`).val();
+                if (v !== undefined) o[attr] = parseInt(v) || 10;
+            }
+
+            const skills = {};
+            for (const key of Object.keys(SKILL_ABBREV)) {
+                const el = html.find(`[name="officer_${i}_skill_${key}"]`);
+                if (el.length) skills[key] = el.is(':checked');
+                else if (o.skills?.[key]) skills[key] = o.skills[key];
+            }
+            o.skills = skills;
+            updated.push(o);
+        }
+        this.officers = updated;
+    }
+
+    // ---- Trade Mode Toggles ----
 
     _onTradeModeChange(event) {
         const isConsignment = $(event.currentTarget).val() === 'consignment';
         const isAutomated = this.element.find('#automateTrading').is(':checked');
-        
         if (isConsignment && !isAutomated) {
             this.element.find('#commissionRateGroup').show();
         } else {
@@ -169,109 +298,53 @@ export class VoyageSetupDialog extends FormApplication {
 
     _onAutomateToggle(event) {
         const isAutomated = $(event.currentTarget).is(':checked');
-        
         if (isAutomated) {
             this.element.find('#manualTradeModeGroup').hide();
             this.element.find('#commissionRateGroup').hide();
         } else {
             this.element.find('#manualTradeModeGroup').show();
             const isConsignment = this.element.find('input[name="tradeMode"]:checked').val() === 'consignment';
-            if (isConsignment) {
-                this.element.find('#commissionRateGroup').show();
-            }
+            if (isConsignment) this.element.find('#commissionRateGroup').show();
         }
     }
 
+    // ---- Submit ----
+
     async _onSubmit(event) {
         event.preventDefault();
-        
+        this._syncOfficersFromForm();
+
         const formData = this._getFormData();
-        
         const validation = this._validateFormData(formData);
         if (!validation.valid) {
             ui.notifications.error(validation.message);
             return;
         }
 
+        // Save settings including officers
+        formData.officers = this.officers;
         await game.settings.set('adnd-voyage-simulator', 'lastVoyageSettings', formData);
 
         const voyageConfig = this._buildVoyageConfig(formData);
-
         this.close();
 
         const simulator = new VoyageSimulator();
-        
-        // Notify user of mode
         if (voyageConfig.mode === 'manual') {
             ui.notifications.info("Initializing Manual Voyage. Use the macro or sidebar to advance days.");
         } else {
             ui.notifications.info("Starting Automated Voyage Simulation...");
         }
-
         await simulator.startVoyage(voyageConfig);
     }
 
     _getFormData() {
         const html = this.element;
-
         return {
             shipID: html.find('#shipID').val(),
             routeID: html.find('#routeID').val(),
             mode: html.find('#mode').val(),
-            
-            // Captain
-            captainName: html.find('#captainName').val(),
-            str: parseInt(html.find('#str').val()),
-            dex: parseInt(html.find('#dex').val()),
-            con: parseInt(html.find('#con').val()),
-            int: parseInt(html.find('#int').val()),
-            wis: parseInt(html.find('#wis').val()),
-            cha: parseInt(html.find('#cha').val()),
-            
-            skillBargaining: html.find('#skillBargaining').is(':checked'),
-            skillAppraisal: html.find('#skillAppraisal').is(':checked'),
-            skillTrade: html.find('#skillTrade').is(':checked'),
-            skillSmuggling: html.find('#skillSmuggling').is(':checked'),
-            skillCustomsInspection: html.find('#skillCustomsInspection').is(':checked'),
-            skillSeamanship: html.find('#skillSeamanship').is(':checked'),
-            skillShipCarpentry: html.find('#skillShipCarpentry').is(':checked'),
-            skillNavigation: html.find('#skillNavigation').is(':checked'),
-            skillPiloting: html.find('#skillPiloting').is(':checked'),
-            skillSeaLore: html.find('#skillSeaLore').is(':checked'),
-            skillShipRowing: html.find('#skillShipRowing').is(':checked'),
-            skillShipSailing: html.find('#skillShipSailing').is(':checked'),
-            skillShipwright: html.find('#skillShipwright').is(':checked'),
-            skillSignaling: html.find('#skillSignaling').is(':checked'),
-            skillVesselIdentification: html.find('#skillVesselIdentification').is(':checked'),
-            
-            // Lieutenant
-            ltName: html.find('#lieutenantName').val(),
-            ltStr: parseInt(html.find('#ltStr').val()),
-            ltDex: parseInt(html.find('#ltDex').val()),
-            ltCon: parseInt(html.find('#ltCon').val()),
-            ltInt: parseInt(html.find('#ltInt').val()),
-            ltWis: parseInt(html.find('#ltWis').val()),
-            ltCha: parseInt(html.find('#ltCha').val()),
-            
-            ltSkillBargaining: html.find('#ltSkillBargaining').is(':checked'),
-            ltSkillAppraisal: html.find('#ltSkillAppraisal').is(':checked'),
-            ltSkillTrade: html.find('#ltSkillTrade').is(':checked'),
-            ltSkillSmuggling: html.find('#ltSkillSmuggling').is(':checked'),
-            ltSkillCustomsInspection: html.find('#ltSkillCustomsInspection').is(':checked'),
-            ltSkillSeamanship: html.find('#ltSkillSeamanship').is(':checked'),
-            ltSkillShipCarpentry: html.find('#ltSkillShipCarpentry').is(':checked'),
-            ltSkillNavigation: html.find('#ltSkillNavigation').is(':checked'),
-            ltSkillPiloting: html.find('#ltSkillPiloting').is(':checked'),
-            ltSkillSeaLore: html.find('#ltSkillSeaLore').is(':checked'),
-            ltSkillShipRowing: html.find('#ltSkillShipRowing').is(':checked'),
-            ltSkillShipSailing: html.find('#ltSkillShipSailing').is(':checked'),
-            ltSkillShipwright: html.find('#ltSkillShipwright').is(':checked'),
-            ltSkillSignaling: html.find('#ltSkillSignaling').is(':checked'),
-            ltSkillVesselIdentification: html.find('#ltSkillVesselIdentification').is(':checked'),
-            
-            // Settings
             startingGold: parseInt(html.find('#startingGold').val()),
-            tradeMode: html.find('input[name="tradeMode"]:checked').val(),
+            tradeMode: html.find('input[name="tradeMode"]:checked').val() || "speculation",
             commissionRate: parseInt(html.find('#commissionRate').val()),
             latitude: parseFloat(html.find('#latitude').val()),
             longitude: parseFloat(html.find('#longitude').val()),
@@ -281,80 +354,83 @@ export class VoyageSetupDialog extends FormApplication {
             startingYear: parseInt(html.find('#startingYear').val()),
             startingMonth: html.find('#startingMonth').val(),
             startingDay: parseInt(html.find('#startingDay').val()),
-            crewQuality: html.find('#crewQuality').val()
+            crewQuality: html.find('#crewQuality').val(),
+            officers: this.officers
         };
     }
 
     _validateFormData(data) {
         if (!data.shipID) return { valid: false, message: "Please select a ship" };
         if (!data.routeID) return { valid: false, message: "Please select a route" };
-        if (!data.captainName) return { valid: false, message: "Captain must have a name" };
         if (data.startingGold < 0) return { valid: false, message: "Starting gold must be >= 0" };
+        if (!data.startingMonth) return { valid: false, message: "Please select a starting month" };
+
+        // Must have at least a captain
+        const hasCaptain = this.officers.some(o => o.role === "Captain");
+        if (!hasCaptain) return { valid: false, message: "Ship requires a Captain" };
+        const captainName = this.officers.find(o => o.role === "Captain")?.name;
+        if (!captainName) return { valid: false, message: "Captain must have a name" };
+
         if (data.tradeMode === "consignment" && (data.commissionRate < 10 || data.commissionRate > 40)) {
             return { valid: false, message: "Commission rate must be 10-40%" };
         }
-        if (!data.startingMonth) return { valid: false, message: "Please select a starting month" };
-
         return { valid: true };
     }
 
     _buildVoyageConfig(formData) {
+        // Build officer data with proficiency scores
+        const allOfficers = this.officers.map(o => {
+            const profScores = ProficiencySystem.createProficiencyScores({
+                ...o,
+                strScore: o.str, dexScore: o.dex, conScore: o.con,
+                intScore: o.int, wisScore: o.wis, chaScore: o.cha
+            });
+            return {
+                name: o.name,
+                role: o.role,
+                level: o.level || 1,
+                status: o.status || "healthy",
+                str: o.str, dex: o.dex, con: o.con,
+                int: o.int, wis: o.wis, cha: o.cha,
+                skills: o.skills || {},
+                proficiencyScores: profScores
+            };
+        });
+
+        // Extract captain and first lieutenant for backward compat
+        const captain = allOfficers.find(o => o.role === "Captain") || allOfficers[0];
+        const lieutenant = allOfficers.find(o => o.role === "Lieutenant") || { name: "", level: 1, skills: {}, proficiencyScores: {} };
+
+        // Build legacy lieutenantSkills (boolean map) from all non-captain officers
+        const lieutenantSkills = {};
+        for (const o of allOfficers) {
+            if (o.role === "Captain") continue;
+            for (const [sk, has] of Object.entries(o.skills || {})) {
+                if (has) lieutenantSkills[sk] = true;
+            }
+        }
+
         return {
-            shipId: formData.shipID,
+            shipId: this._resolveShipId(formData.shipID),
             routeId: formData.routeID,
             mode: formData.mode,
             captain: {
-                name: formData.captainName,
-                strScore: formData.str,
-                dexScore: formData.dex,
-                conScore: formData.con,
-                intScore: formData.int,
-                wisScore: formData.wis,
-                chaScore: formData.cha,
-                skills: {
-                    bargaining: formData.skillBargaining,
-                    appraisal: formData.skillAppraisal,
-                    trade: formData.skillTrade,
-                    smuggling: formData.skillSmuggling,
-                    customsInspection: formData.skillCustomsInspection,
-                    seamanship: formData.skillSeamanship,
-                    shipCarpentry: formData.skillShipCarpentry,
-                    navigation: formData.skillNavigation,
-                    piloting: formData.skillPiloting,
-                    seaLore: formData.skillSeaLore,
-                    shipRowing: formData.skillShipRowing,
-                    shipSailing: formData.skillShipSailing,
-                    shipwright: formData.skillShipwright,
-                    signaling: formData.skillSignaling,
-                    vesselIdentification: formData.skillVesselIdentification
-                }
+                name: captain.name,
+                level: captain.level,
+                strScore: captain.str, dexScore: captain.dex, conScore: captain.con,
+                intScore: captain.int, wisScore: captain.wis, chaScore: captain.cha,
+                chaScore: captain.cha,
+                skills: captain.skills || {}
             },
             lieutenant: {
-                name: formData.ltName,
-                strScore: formData.ltStr,
-                dexScore: formData.ltDex,
-                conScore: formData.ltCon,
-                intScore: formData.ltInt,
-                wisScore: formData.ltWis,
-                chaScore: formData.ltCha,
-                skills: {
-                    bargaining: formData.ltSkillBargaining,
-                    appraisal: formData.ltSkillAppraisal,
-                    trade: formData.ltSkillTrade,
-                    smuggling: formData.ltSkillSmuggling,
-                    customsInspection: formData.ltSkillCustomsInspection,
-                    seamanship: formData.ltSkillSeamanship,
-                    shipCarpentry: formData.ltSkillShipCarpentry,
-                    navigation: formData.ltSkillNavigation,
-                    piloting: formData.ltSkillPiloting,
-                    seaLore: formData.ltSkillSeaLore,
-                    shipRowing: formData.ltSkillShipRowing,
-                    shipSailing: formData.ltSkillShipSailing,
-                    shipwright: formData.ltSkillShipwright,
-                    signaling: formData.ltSkillSignaling,
-                    vesselIdentification: formData.ltSkillVesselIdentification
-                }
+                name: lieutenant.name,
+                level: lieutenant.level,
+                strScore: lieutenant.str, dexScore: lieutenant.dex, conScore: lieutenant.con,
+                intScore: lieutenant.int, wisScore: lieutenant.wis, chaScore: lieutenant.cha,
+                skills: lieutenant.skills || {}
             },
+            allOfficers,
+            lieutenantSkills,
             startingGold: formData.startingGold,
             tradeMode: formData.tradeMode,
             commissionRate: formData.commissionRate,
@@ -368,5 +444,23 @@ export class VoyageSetupDialog extends FormApplication {
             startingDay: formData.startingDay,
             crewQuality: formData.crewQuality
         };
+    }
+
+    /**
+     * If the selected shipID is a template reference (tmpl:caravel),
+     * create a named instance from it. Otherwise return the ID as-is.
+     */
+    _resolveShipId(shipID) {
+        if (!shipID?.startsWith("tmpl:")) return shipID;
+        const templateId = shipID.slice(5);
+        const tmpl = ShipRegistry.getTemplate(templateId);
+        if (!tmpl) {
+            ui.notifications.error(`Unknown ship template: ${templateId}`);
+            return shipID;
+        }
+        const shipName = tmpl.shipType; // default name = ship type
+        const instance = ShipRegistry.createFromTemplate(templateId, shipName);
+        console.log(`Voyage Setup | Created ship "${instance.name}" (${instance.id}) from template ${templateId}`);
+        return instance.id;
     }
 }

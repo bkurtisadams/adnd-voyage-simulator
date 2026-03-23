@@ -80,6 +80,37 @@ export class VoyageSimulator {
         return null;
     }
 
+    // Date/Time Setup — prefer CTT, fall back to weather module
+    const ctt = game.modules?.get('calendar-time-tracker')?.api;
+    if (ctt && voyageConfig.startingYear && voyageConfig.startingMonth && voyageConfig.startingDay) {
+        // CTT expects numeric month index, but voyageConfig has month name string
+        // Look up the index from CTT's calendar configuration
+        let monthIndex = voyageConfig.startingMonth;
+        if (typeof monthIndex === 'string') {
+            const calConfig = ctt.getMonthData?.(0); // probe to check if API works
+            // Search CTT's calendar months for the matching name
+            const tracker = game.modules.get('calendar-time-tracker')?.timeTracker;
+            const months = tracker?.calendarSystem?.configuration?.months || [];
+            const foundIdx = months.findIndex(m => m.name === monthIndex);
+            if (foundIdx >= 0) {
+                monthIndex = foundIdx;
+                console.log(`[Voyage Setup] Resolved month "${voyageConfig.startingMonth}" to CTT index ${monthIndex}`);
+            } else {
+                console.warn(`[Voyage Setup] Could not find month "${voyageConfig.startingMonth}" in CTT calendar, skipping setDateTime`);
+                monthIndex = null;
+            }
+        }
+        if (monthIndex !== null) {
+            ctt.setDateTime({
+                year: voyageConfig.startingYear,
+                month: monthIndex,
+                day: voyageConfig.startingDay,
+                hour: 6, minute: 0, second: 0
+            });
+            console.log(`[Voyage Setup] Date set via CTT: ${ctt.getCurrentDate().fullDateTime}`);
+        }
+    }
+
     // Weather System Setup
     if (globalThis.dndWeather?.weatherSystem) {
         const system = globalThis.dndWeather.weatherSystem;
@@ -89,7 +120,8 @@ export class VoyageSimulator {
         system.settings.elevation = 0;
         system.settings.locationName = PortRegistry.get(voyageState.route.ports[0])?.name || "At Sea";
 
-        if (system.calendarTracker && voyageConfig.startingYear && voyageConfig.startingMonth && voyageConfig.startingDay) {
+        // Only set weather calendar if CTT is NOT handling dates
+        if (!ctt && system.calendarTracker && voyageConfig.startingYear && voyageConfig.startingMonth && voyageConfig.startingDay) {
             system.calendarTracker.setDate({
                 year: voyageConfig.startingYear,
                 month: voyageConfig.startingMonth,
@@ -97,7 +129,7 @@ export class VoyageSimulator {
                 hour: 6,
                 minute: 0
             });
-            console.log(`[Voyage Setup] Date set to: ${system.calendarTracker.getDateString()}`);
+            console.log(`[Voyage Setup] Date set via Weather module: ${system.calendarTracker.getDateString()}`);
         }
     }
 
@@ -240,6 +272,7 @@ export class VoyageSimulator {
           // Actors
           captain: { ...config.captain, level: capLevel }, // Store calculated level
           lieutenant: { ...config.lieutenant, level: ltLevel },
+          allOfficers: config.allOfficers || [],
           officerCounts: {
               lieutenants: requiredLieutenants,
               mates: requiredMates
@@ -301,6 +334,21 @@ export class VoyageSimulator {
           },
           maintenance: { daysSinceService: 0, speedPenalty: 0, quality: "Average" },
           
+          // Scurvy tracking
+          scurvy: {
+              daysOnSeaRations: 0,
+              affectedCrew: 0,
+              totalConLost: 0,
+              totalStrLost: 0
+          },
+
+          // Crew morale
+          morale: {
+              daysSinceShoreLeave: 0,
+              proficiencyPenalty: 0,
+              desertedTotal: 0
+          },
+
           // Dates & Flags
           shipStartDate: null,
           shipEndDate: null,
@@ -356,13 +404,21 @@ export class VoyageSimulator {
       for (let i = 0; i < ports.length - 1; i++) {
           const distance = PortRegistry.getDistance(ports[i], ports[i + 1]);
           if (!distance) continue;
-          legs.push({ fromID: ports[i], toID: ports[i + 1], distance: distance });
+          const waterType = route.segments
+              ? (route.segments.find(s => s.from === ports[i] && s.to === ports[i + 1])?.waterType || "coastal")
+              : "coastal";
+          legs.push({ fromID: ports[i], toID: ports[i + 1], distance: distance, waterType: waterType });
       }
       if (route.name.toLowerCase().includes("circuit") && legs.length > 0) {
           const lastPort = ports[ports.length - 1];
           const firstPort = ports[0];
           const returnDist = PortRegistry.getDistance(lastPort, firstPort);
-          if (returnDist) legs.push({ fromID: lastPort, toID: firstPort, distance: returnDist });
+          if (returnDist) {
+              const waterType = route.segments
+                  ? (route.segments.find(s => s.from === lastPort && s.to === firstPort)?.waterType || "coastal")
+                  : "coastal";
+              legs.push({ fromID: lastPort, toID: firstPort, distance: returnDist, waterType: waterType });
+          }
       }
       return legs;
   }
@@ -467,11 +523,14 @@ export class VoyageSimulator {
       
       state.voyageLogHtml.value += `<h4>Leg ${legIndex + 1}: ${fromName} → ${toName}</h4><p><strong>Distance:</strong> ${leg.distance} miles</p>`;
       
+      // Set waterType for this leg from route segment data
+      state.currentWaterType = this._waterTypeToEncounterKey(leg.waterType || "coastal");
+
       let remainingDistance = leg.distance;
       let sailingDays = 0;
       
       while (remainingDistance > 0 || sailingDays === 0) {
-          const dayResult = await this.simulateSailingDay(state, toName, remainingDistance);
+          const dayResult = await this.simulateSailingDay(state, toName, remainingDistance, leg);
           if (dayResult.shipSank) return false;
           remainingDistance -= dayResult.distanceCovered;
           sailingDays++;
@@ -481,7 +540,20 @@ export class VoyageSimulator {
       return true;
   }
 
-  async simulateSailingDay(state, destinationName, remainingDistance) {
+  /**
+   * Map route segment waterType strings to EncounterSystem keys
+   */
+  _waterTypeToEncounterKey(waterType) {
+      const map = {
+          "coastal": "SHALLOW",
+          "openWater": "DEEP",
+          "river": "FRESH",
+          "lake": "FRESH"
+      };
+      return map[waterType] || "SHALLOW";
+  }
+
+  async simulateSailingDay(state, destinationName, remainingDistance, leg = null) {
       const dateStr = this.getCurrentDate();
       
       if (state.dailyOperationalCost) {
@@ -526,13 +598,39 @@ export class VoyageSimulator {
           };
       }
       
-      const baseSpeed = state.ship.movement * this.MILES_PER_INCH_DAILY;
+      // Speed: Seafaring ships store dailySail (miles/day) directly.
+      // DMG ships store normalSail (mph) — convert via hours/day.
+      // Legacy ships store movement ("inches") — convert via MILES_PER_INCH_DAILY.
+      const SAILING_HOURS_PER_DAY = 10;
+      let baseSpeed;
+      if (state.ship.dailySail) {
+          baseSpeed = state.ship.dailySail;
+      } else if (state.ship.normalSail) {
+          baseSpeed = state.ship.normalSail * SAILING_HOURS_PER_DAY;
+      } else {
+          baseSpeed = state.ship.movement * this.MILES_PER_INCH_DAILY;
+      }
       const speedInfo = this.calculateSailingSpeed(baseSpeed, parsedWeather);
       
       let distanceCovered = 0;
       let damage = 0;
       let shipSank = false;
       
+      // --- Maintenance evaluation ---
+      this._evaluateMaintenance(state, dateStr);
+
+      // --- Scurvy tracking (at sea = sea rations) ---
+      this._processScurvy(state, dateStr);
+
+      // --- Morale tracking ---
+      this._processMorale(state, dateStr);
+
+      // Apply morale penalty to speed
+      const moralePenalty = state.morale?.proficiencyPenalty || 0;
+
+      // Apply maintenance speed penalty
+      const maintSpeedPenalty = state.maintenance?.speedPenalty || 0;
+
       if (speedInfo.becalmed) {
           state.voyageLogHtml.value += `<p><strong>${dateStr}:</strong> Becalmed! No progress made. ${speedInfo.note}</p>`;
           if (state.enableRowing) {
@@ -551,7 +649,31 @@ export class VoyageSimulator {
           }
       } else {
           state.consecutiveRowingDays = 0;
-          distanceCovered = Math.min(speedInfo.speed, remainingDistance);
+          let adjustedSpeed = speedInfo.speed;
+          // Apply cumulative maintenance speed penalty
+          if (maintSpeedPenalty > 0) {
+              adjustedSpeed = Math.max(1, Math.floor(adjustedSpeed * (100 - maintSpeedPenalty) / 100));
+          }
+          distanceCovered = Math.min(adjustedSpeed, remainingDistance);
+
+          // --- Daily navigation check (openWater segments only) ---
+          const segWaterType = leg?.waterType || "coastal";
+          if (segWaterType === "openWater" && distanceCovered > 0) {
+              const navResult = await this._rollNavigationCheck(state, parsedWeather, moralePenalty);
+              if (navResult && navResult.failed) {
+                  const milesLost = Math.max(0, Math.floor(distanceCovered * navResult.lostPercent / 100));
+                  distanceCovered = Math.max(0, distanceCovered - milesLost);
+                  state.voyageLogHtml.value += `<p>⚠️ Navigation error! Lost ${milesLost} miles (d20: ${navResult.roll}, needed ≤ ${navResult.target}). ${navResult.modNote}</p>`;
+              }
+          }
+
+          // --- Wind damage table (gale+ conditions, every 6 hours) ---
+          const windDmgResults = await this._processWindDamage(state, parsedWeather, dateStr);
+          for (const wd of windDmgResults) {
+              if (wd.damage) damage += wd.damage;
+              if (wd.sank) shipSank = true;
+          }
+
           const { NavigationSystem } = await import('./navigation.js');
           const hazard = NavigationSystem.assessWeatherHazard(parsedWeather);
 
@@ -565,7 +687,6 @@ export class VoyageSimulator {
                   state.totalHullDamage += damage;
                   state.voyageLogHtml.value += `<p><strong>⚠️ ${hazard.description} (${dateStr})!</strong> Piloting check failed by ${pilotCheck.missedBy}. Hull damage: ${damage} HP. (${state.ship.hullPoints.value}/${state.ship.hullPoints.max} remaining)</p>`;
                   
-                  // Log weather damage event
                   state.events.push({
                       type: 'damage',
                       date: dateStr,
@@ -586,7 +707,6 @@ export class VoyageSimulator {
       state.weatherLogHtml.value += weatherLog;
       
       // Process daily encounters based on water type
-      // Default to SHALLOW (coastal) - could be set per route segment
       const { EncounterSystem } = await import('./encounter-system.js');
       const waterType = state.currentWaterType || "SHALLOW";
       console.log(`Voyage Simulator | Processing encounters for water type: ${waterType}`);
@@ -598,7 +718,6 @@ export class VoyageSimulator {
           console.log(`Voyage Simulator | Encounter: ${encounterText}`);
           state.voyageLogHtml.value += `<p><strong>🎲 Encounter (${dateStr}):</strong> ${encounterText}</p>`;
           
-          // Add to structured events log
           state.events.push({
               type: 'encounter',
               date: dateStr,
@@ -611,10 +730,8 @@ export class VoyageSimulator {
               surprise: encounter.surprise?.shipSurprised || false
           });
           
-          const encounterDamage = await EncounterSystem.calculateEncounterDamage(
-              encounter.encounter, 
-              encounter.classification,
-              encounter.numberAppearing?.count || 1
+          const encounterDamage = await this._resolveEncounterOrBoarding(
+              state, encounter, dateStr
           );
           
           if (encounterDamage.hullDamage > 0) {
@@ -623,7 +740,6 @@ export class VoyageSimulator {
               damage += encounterDamage.hullDamage;
               state.voyageLogHtml.value += `<p>Hull damage: ${encounterDamage.hullDamage} HP. (${state.ship.hullPoints.value}/${state.ship.hullPoints.max} remaining)</p>`;
               
-              // Log damage event
               state.events.push({
                   type: 'damage',
                   date: dateStr,
@@ -637,10 +753,8 @@ export class VoyageSimulator {
           if (encounterDamage.crewLoss > 0) {
               state.voyageLogHtml.value += `<p>⚠️ Crew casualties: ${encounterDamage.crewLoss} lost!</p>`;
               
-              // Reduce crew count from currentCrew
               let remainingLosses = encounterDamage.crewLoss;
               
-              // Remove sailors first (most common crew type)
               const sailors = state.currentCrew.find(c => c.role === "sailor" || c.role === "sailors");
               if (sailors && remainingLosses > 0) {
                   const lostSailors = Math.min(sailors.count, remainingLosses);
@@ -648,7 +762,6 @@ export class VoyageSimulator {
                   remainingLosses -= lostSailors;
               }
               
-              // If still have losses, remove marines
               if (remainingLosses > 0) {
                   const marines = state.currentCrew.find(c => c.role === "marine" || c.role === "marines");
                   if (marines) {
@@ -658,7 +771,6 @@ export class VoyageSimulator {
                   }
               }
               
-              // Log crew loss event
               state.events.push({
                   type: 'crew_loss',
                   date: dateStr,
@@ -679,6 +791,375 @@ export class VoyageSimulator {
       }
       
       return { distanceCovered, shipSank, damage };
+  }
+
+  // ===========================================================================
+  // NAVIGATION CHECK (open water only)
+  // d20 vs navigator proficiency with full modifier stack from the PDF:
+  //   no charts +2, strong breeze +2, gale +5, storm +10,
+  //   two navigators -3, unseaworthy +2, current +1/+3
+  // Failure costs (result × 5)% of the day's travel as lost miles
+  // ===========================================================================
+  async _rollNavigationCheck(state, weather, moralePenalty = 0) {
+      const windSpeed = weather.wind.speed;
+      let modifier = 0;
+      let modParts = [];
+
+      // Wind modifiers
+      if (windSpeed >= 75) { modifier += 10; modParts.push("storm +10"); }
+      else if (windSpeed >= 50) { modifier += 5; modParts.push("gale +5"); }
+      else if (windSpeed >= 30) { modifier += 2; modParts.push("strong breeze +2"); }
+
+      // No charts — check proficiency
+      const hasNavigation = state.captainProficiencyScores?.navigation || state.lieutenantSkills?.navigation;
+      if (!hasNavigation) { modifier += 2; modParts.push("no charts +2"); }
+
+      // Two navigators bonus
+      const capNav = state.captainProficiencyScores?.navigation;
+      const ltNav = state.lieutenantSkills?.navigation;
+      if (capNav && ltNav) { modifier -= 3; modParts.push("two navigators -3"); }
+
+      // Unseaworthy (maintenance quality degraded)
+      if (state.maintenance?.quality === "Unseaworthy") { modifier += 2; modParts.push("unseaworthy +2"); }
+
+      // Morale penalty
+      if (moralePenalty > 0) { modifier += moralePenalty; modParts.push(`morale +${moralePenalty}`); }
+
+      // Navigator base target: proficiency score or default 10
+      const navScore = capNav || ltNav || 10;
+      const target = Math.max(1, navScore - modifier);
+
+      const navRoll = new Roll("1d20");
+      await navRoll.evaluate();
+
+      if (navRoll.total <= target) return { failed: false };
+
+      const overBy = navRoll.total - target;
+      const lostPercent = overBy * 5;
+      return {
+          failed: true,
+          roll: navRoll.total,
+          target,
+          overBy,
+          lostPercent,
+          modNote: modParts.length ? `(mods: ${modParts.join(", ")})` : ""
+      };
+  }
+
+  // ===========================================================================
+  // WIND DAMAGE TABLE — called every 6 hours during gale+ conditions
+  // Checks: capsizing, broken mast, broken beams/leaking, torn sails, man overboard
+  // Thresholds by severity: gale / storm / hurricane
+  // ===========================================================================
+  async _processWindDamage(state, weather, dateStr) {
+      const windSpeed = weather.wind.speed;
+      const results = [];
+      if (windSpeed < 50) return results; // Below gale, no wind damage checks
+
+      // Determine severity tier: 0=gale(50-74), 1=storm(75-99), 2=hurricane(100+)
+      let tier;
+      if (windSpeed >= 100) tier = 2;
+      else if (windSpeed >= 75) tier = 1;
+      else tier = 0;
+
+      const thresholds = {
+          capsize:     [1, 20, 40],
+          brokenMast:  [5, 25, 45],
+          leaking:     [10, 35, 50],
+          tornSails:   [20, 45, 65],
+          manOverboard:[10, 50, 70]
+      };
+
+      // 4 checks per day (every 6 hours)
+      for (let watch = 0; watch < 4; watch++) {
+          for (const [event, chances] of Object.entries(thresholds)) {
+              const chance = chances[tier];
+              const roll = new Roll("1d100");
+              await roll.evaluate();
+              if (roll.total > chance) continue;
+
+              let entry = { event, roll: roll.total, chance, damage: 0, sank: false };
+
+              if (event === "capsize") {
+                  state.voyageLogHtml.value += `<p><strong>☠️ CAPSIZED (${dateStr})!</strong> Ship overturned by wind! (${roll.total} ≤ ${chance}%)</p>`;
+                  state.ship.hullPoints.value = 0;
+                  entry.damage = state.ship.hullPoints.max;
+                  entry.sank = true;
+                  results.push(entry);
+                  return results;
+              }
+              if (event === "brokenMast") {
+                  state.ship.movement = Math.max(1, Math.floor(state.ship.movement / 2));
+                  state.voyageLogHtml.value += `<p><strong>⚠️ Broken mast (${dateStr})!</strong> Movement halved. (${roll.total} ≤ ${chance}%)</p>`;
+                  state.events.push({ type: 'wind_damage', date: dateStr, event: 'brokenMast' });
+              }
+              if (event === "leaking") {
+                  const leakDmg = new Roll("1d4");
+                  await leakDmg.evaluate();
+                  state.ship.hullPoints.value = Math.max(0, state.ship.hullPoints.value - leakDmg.total);
+                  state.totalHullDamage += leakDmg.total;
+                  entry.damage = leakDmg.total;
+                  state.voyageLogHtml.value += `<p><strong>⚠️ Beams broken / hull leaking (${dateStr})!</strong> ${leakDmg.total} hull damage — crew assigned to bail. (${roll.total} ≤ ${chance}%)</p>`;
+                  state.events.push({ type: 'wind_damage', date: dateStr, event: 'leaking', hullDamage: leakDmg.total });
+                  if (state.ship.hullPoints.value <= 0) { entry.sank = true; results.push(entry); return results; }
+              }
+              if (event === "tornSails") {
+                  // 25% speed reduction per torn sails event (stacks)
+                  state.maintenance.speedPenalty = Math.min(75, (state.maintenance.speedPenalty || 0) + 25);
+                  state.voyageLogHtml.value += `<p><strong>⚠️ Sails torn (${dateStr})!</strong> Speed reduced. (${roll.total} ≤ ${chance}%)</p>`;
+                  state.events.push({ type: 'wind_damage', date: dateStr, event: 'tornSails' });
+              }
+              if (event === "manOverboard") {
+                  // Randomly lose an officer or crewman
+                  const crewLoss = this._resolveManOverboard(state);
+                  state.voyageLogHtml.value += `<p><strong>⚠️ Man overboard (${dateStr})!</strong> Lost: ${crewLoss.who}. (${roll.total} ≤ ${chance}%)</p>`;
+                  state.events.push({ type: 'crew_loss', date: dateStr, source: 'wind', crewLost: 1, who: crewLoss.who });
+              }
+
+              results.push(entry);
+          }
+      }
+      return results;
+  }
+
+  /**
+   * Resolve man overboard — randomly kills an officer or crew member
+   */
+  _resolveManOverboard(state) {
+      // 20% chance it's an officer, 80% regular crew
+      const isOfficer = Math.random() < 0.20;
+      if (isOfficer) {
+          const mates = state.officerCounts?.mates || 0;
+          const lts = state.officerCounts?.lieutenants || 0;
+          if (mates > 0) {
+              state.officerCounts.mates--;
+              return { who: "Mate" };
+          } else if (lts > 0) {
+              state.officerCounts.lieutenants--;
+              return { who: "Lieutenant" };
+          }
+      }
+      // Regular crew
+      const sailors = state.currentCrew.find(c => c.role === "sailor" || c.role === "sailors");
+      if (sailors && sailors.count > 0) { sailors.count--; return { who: "Sailor" }; }
+      const marines = state.currentCrew.find(c => c.role === "marine" || c.role === "marines");
+      if (marines && marines.count > 0) { marines.count--; return { who: "Marine" }; }
+      const oarsmen = state.currentCrew.find(c => c.role === "oarsman" || c.role === "oarsmen");
+      if (oarsmen && oarsmen.count > 0) { oarsmen.count--; return { who: "Oarsman" }; }
+      return { who: "Unknown crew" };
+  }
+
+  // ===========================================================================
+  // SCURVY — counter for daysOnSeaRations; after 30 days, 10% crew
+  // affected per additional week. Affected crew lose 1 CON + 1 STR/week.
+  // Port with fresh food resets the counter and recovers 3 pts/week.
+  // ===========================================================================
+  _processScurvy(state, dateStr) {
+      if (!state.scurvy) state.scurvy = { daysOnSeaRations: 0, affectedCrew: 0, totalConLost: 0, totalStrLost: 0 };
+      state.scurvy.daysOnSeaRations++;
+
+      if (state.scurvy.daysOnSeaRations > 30 && state.scurvy.daysOnSeaRations % 7 === 0) {
+          const totalCrew = (state.currentCrew || []).reduce((s, g) => s + (g.count || 0), 0);
+          const newCases = Math.max(1, Math.floor(totalCrew * 0.10));
+          state.scurvy.affectedCrew = Math.min(totalCrew, state.scurvy.affectedCrew + newCases);
+          state.scurvy.totalConLost++;
+          state.scurvy.totalStrLost++;
+          state.voyageLogHtml.value += `<p><strong>🤒 Scurvy (${dateStr})!</strong> ${state.scurvy.affectedCrew} crew affected (week ${Math.floor((state.scurvy.daysOnSeaRations - 30) / 7) + 1}). -1 CON, -1 STR this week.</p>`;
+          state.events.push({ type: 'scurvy', date: dateStr, affected: state.scurvy.affectedCrew });
+      }
+  }
+
+  /**
+   * Reset scurvy at port with fresh food. Called from processPort.
+   */
+  _resetScurvyAtPort(state, daysInPort, dateStr) {
+      if (!state.scurvy) return;
+      state.scurvy.daysOnSeaRations = 0;
+      const weeksInPort = Math.floor(daysInPort / 7);
+      if (weeksInPort > 0 && state.scurvy.affectedCrew > 0) {
+          const recovered = weeksInPort * 3;
+          state.scurvy.totalConLost = Math.max(0, state.scurvy.totalConLost - recovered);
+          state.scurvy.totalStrLost = Math.max(0, state.scurvy.totalStrLost - recovered);
+          if (state.scurvy.totalConLost === 0) state.scurvy.affectedCrew = 0;
+          state.voyageLogHtml.value += `<p>🍊 Fresh food! Scurvy counter reset. ${weeksInPort > 0 ? `+${recovered} pts recovered.` : ''}</p>`;
+      } else {
+          state.voyageLogHtml.value += `<p>🍊 Fresh provisions loaded — scurvy counter reset.</p>`;
+      }
+  }
+
+  // ===========================================================================
+  // MORALE — daysSinceShoreLeave; >30 days = -1 proficiency per extra week;
+  // 60+ days = desertion roll (lose d4 crew) at each port stop.
+  // ===========================================================================
+  _processMorale(state, dateStr) {
+      if (!state.morale) state.morale = { daysSinceShoreLeave: 0, proficiencyPenalty: 0, desertedTotal: 0 };
+      state.morale.daysSinceShoreLeave++;
+
+      if (state.morale.daysSinceShoreLeave > 30) {
+          const weeksOver = Math.floor((state.morale.daysSinceShoreLeave - 30) / 7);
+          state.morale.proficiencyPenalty = weeksOver;
+          if (weeksOver > 0 && state.morale.daysSinceShoreLeave % 7 === 0) {
+              state.voyageLogHtml.value += `<p><strong>😤 Low morale (${dateStr})!</strong> ${state.morale.daysSinceShoreLeave} days without shore leave. -${weeksOver} to proficiency checks.</p>`;
+          }
+      } else {
+          state.morale.proficiencyPenalty = 0;
+      }
+  }
+
+  /**
+   * Process morale at port — grant shore leave, check desertion.
+   */
+  async _processMoraleAtPort(state, portName, dateStr) {
+      if (!state.morale) return;
+
+      // Check desertion if 60+ days without shore leave
+      if (state.morale.daysSinceShoreLeave >= 60) {
+          const desertRoll = new Roll("1d4");
+          await desertRoll.evaluate();
+          const deserted = desertRoll.total;
+          let remaining = deserted;
+          const sailors = state.currentCrew.find(c => c.role === "sailor" || c.role === "sailors");
+          if (sailors && remaining > 0) {
+              const lost = Math.min(sailors.count, remaining);
+              sailors.count -= lost;
+              remaining -= lost;
+          }
+          if (remaining > 0) {
+              const oarsmen = state.currentCrew.find(c => c.role === "oarsman" || c.role === "oarsmen");
+              if (oarsmen) { const lost = Math.min(oarsmen.count, remaining); oarsmen.count -= lost; remaining -= lost; }
+          }
+          state.morale.desertedTotal += deserted;
+          state.voyageLogHtml.value += `<p><strong>🏃 Desertion at ${portName}!</strong> ${deserted} crew deserted (${state.morale.daysSinceShoreLeave} days without leave).</p>`;
+          state.events.push({ type: 'desertion', date: dateStr, count: deserted, port: portName });
+      }
+
+      // Reset morale
+      state.morale.daysSinceShoreLeave = 0;
+      state.morale.proficiencyPenalty = 0;
+  }
+
+  // ===========================================================================
+  // MAINTENANCE — daysSinceService > 180 degrades quality, cumulative 10% speed
+  // penalty per month overdue. Maintenance at port costs 1 gp/hull/day for
+  // (maxHull/5) days.
+  // ===========================================================================
+  _evaluateMaintenance(state, dateStr) {
+      if (!state.maintenance) state.maintenance = { daysSinceService: 0, speedPenalty: 0, quality: "Average" };
+      const days = state.maintenance.daysSinceService || 0;
+
+      if (days > 180) {
+          const monthsOverdue = Math.floor((days - 180) / 30);
+          const newPenalty = monthsOverdue * 10;
+
+          // Degrade quality one step at 180, 210, 240...
+          const qualities = ["Average", "Fair", "Poor", "Unseaworthy"];
+          const qIdx = Math.min(qualities.length - 1, monthsOverdue);
+          state.maintenance.quality = qualities[qIdx];
+          state.maintenance.speedPenalty = newPenalty;
+
+          if (days % 30 === 0) {
+              state.voyageLogHtml.value += `<p><strong>🔧 Maintenance overdue (${dateStr})!</strong> ${days} days since last service. Quality: ${state.maintenance.quality}. Speed penalty: -${newPenalty}%.</p>`;
+          }
+      }
+  }
+
+  /**
+   * Perform maintenance at port.
+   * Cost: 1 gp per hull value per day. Duration: maxHull / 5 days.
+   */
+  async _performMaintenance(state, portName, dateStr) {
+      const maxHull = state.ship.hullPoints?.max || 20;
+      const maintenanceDays = Math.ceil(maxHull / 5);
+      const dailyCost = maxHull; // 1 gp per hull value per day
+      const totalCost = dailyCost * maintenanceDays;
+
+      if (state.treasury < totalCost) {
+          state.voyageLogHtml.value += `<p><em>Maintenance needed but cannot afford (${totalCost} gp for ${maintenanceDays} days).</em></p>`;
+          return 0;
+      }
+
+      state.treasury -= totalCost;
+      state.expenseTotal += totalCost;
+      if (state.breakdown) state.breakdown.repairs += totalCost;
+      this.recordLedgerEntry(state, dateStr, `Ship maintenance at ${portName}`, 0, totalCost);
+
+      state.maintenance.daysSinceService = 0;
+      state.maintenance.speedPenalty = 0;
+      state.maintenance.quality = "Average";
+
+      state.voyageLogHtml.value += `<p><strong>🔧 Maintenance performed at ${portName}:</strong> ${maintenanceDays} days, ${totalCost} gp. Ship quality restored to Average.</p>`;
+      state.events.push({ type: 'maintenance', date: dateStr, cost: totalCost, days: maintenanceDays, port: portName });
+
+      return maintenanceDays;
+  }
+
+  // ===========================================================================
+  // ENCOUNTER → BOARDING INTERCEPT
+  // If the encounter is a boardable threat, route through BoardingCombat.
+  // Auto mode: fully auto-resolve. Manual mode: post interactive chat card.
+  // Falls back to standard calculateEncounterDamage for non-boarding threats.
+  // ===========================================================================
+  async _resolveEncounterOrBoarding(state, encounterResult, dateStr) {
+      const { EncounterSystem } = await import('./encounter-system.js');
+      const enc = encounterResult.encounter;
+      const classification = encounterResult.classification;
+      const numAppearing = encounterResult.numberAppearing?.count || 1;
+
+      // Check if this encounter can board the ship
+      const canHarmResult = EncounterSystem.canCreatureHarmShip(enc);
+      if (canHarmResult.canBoard && classification === "threat") {
+          const { BoardingCombat } = await import('./boarding-combat.js');
+          const boardingCtx = BoardingCombat.detectBoarding(enc, classification, numAppearing, canHarmResult);
+
+          if (boardingCtx) {
+              if (state.mode === "manual") {
+                  // Interactive: post chat card and let GM resolve PC fight
+                  const msgId = await BoardingCombat.postBoardingCard(state, boardingCtx, encounterResult);
+                  state.voyageLogHtml.value += `<p><strong>⚔️ Boarding action initiated (${dateStr})!</strong> See chat for interactive combat card.</p>`;
+                  // Return zero damage here — actual damage applied when GM resolves the card
+                  return { hullDamage: 0, crewLoss: 0, notes: "Boarding action in progress — awaiting GM resolution.", boardingCardId: msgId };
+              } else {
+                  // Auto mode: resolve immediately
+                  const result = await BoardingCombat.autoResolve(state, boardingCtx);
+                  const summary = BoardingCombat.formatAutoResultForLog(result, boardingCtx);
+                  state.voyageLogHtml.value += `<p>${summary}</p>`;
+
+                  // Apply crew losses to state
+                  if (result.totalDefCasualties > 0) {
+                      let remaining = result.totalDefCasualties;
+                      const marines = state.currentCrew.find(c => c.role === "marine" || c.role === "marines");
+                      if (marines) { const lost = Math.min(marines.count, remaining); marines.count -= lost; remaining -= lost; }
+                      const sailors = state.currentCrew.find(c => c.role === "sailor" || c.role === "sailors");
+                      if (sailors && remaining > 0) { const lost = Math.min(sailors.count, remaining); sailors.count -= lost; }
+                  }
+
+                  // Plunder if attackers won
+                  if (result.attackerVictory) {
+                      state.currentCargo = { type: null, loads: 0, purchasePrice: 0 };
+                      const plunderAmount = Math.floor(state.treasury * 0.75);
+                      state.treasury -= plunderAmount;
+                      state.voyageLogHtml.value += `<p><strong>☠️ Plundered!</strong> Lost all cargo and ${plunderAmount} gp.</p>`;
+                  }
+
+                  state.events.push({
+                      type: 'boarding',
+                      date: dateStr,
+                      boarderName: boardingCtx.boarderName,
+                      totalBoarders: boardingCtx.totalBoarders,
+                      defenderVictory: result.defenderVictory,
+                      rounds: result.rounds.length,
+                      defCasualties: result.totalDefCasualties,
+                      atkCasualties: result.totalAtkCasualties
+                  });
+
+                  // Return hull damage — crew losses already applied above
+                  return { hullDamage: result.hullDamage, crewLoss: 0, notes: summary };
+              }
+          }
+      }
+
+      // Non-boarding encounter: use standard damage calculation
+      return await EncounterSystem.calculateEncounterDamage(enc, classification, numAppearing);
   }
 
   calculateSailingSpeed(baseSpeed, weather) {
@@ -722,6 +1203,7 @@ export class VoyageSimulator {
   async processPort(state, portId, legIndex, allLegs) {
       const port = PortRegistry.get(portId);
       const portName = port.name;
+      const dateStr = this.getCurrentDate();
       state.portsVisited.push(portName);
       
       // 1. Clear accumulated sea expenses
@@ -730,8 +1212,8 @@ export class VoyageSimulator {
           state.legAccumulatedCost = 0;
       }
 
-      // 2. Determine time in port
-      const daysInPort = legIndex === allLegs.length - 1 ? 3 : Math.floor(Math.random() * 3) + 2;
+      // 2. Determine base time in port
+      let daysInPort = legIndex === allLegs.length - 1 ? 3 : Math.floor(Math.random() * 3) + 2;
       const portActivity = {
           portName: portName,
           portType: legIndex === allLegs.length - 1 ? "destination" : "intermediate",
@@ -740,7 +1222,33 @@ export class VoyageSimulator {
           activities: [],
           totalCost: 0
       };
-      
+
+      state.voyageLogHtml.value += `<h3>Arrived at ${portName}</h3>`;
+
+      // --- Scurvy: reset counter, fresh food ---
+      this._resetScurvyAtPort(state, daysInPort, dateStr);
+
+      // --- Morale: shore leave, desertion check ---
+      await this._processMoraleAtPort(state, portName, dateStr);
+
+      // --- Maintenance: auto-perform if overdue ---
+      let maintenanceDays = 0;
+      if ((state.maintenance?.daysSinceService || 0) > 180) {
+          maintenanceDays = await this._performMaintenance(state, portName, dateStr);
+          daysInPort = Math.max(daysInPort, maintenanceDays);
+      }
+
+      // --- Loading/unloading time ---
+      // 1 load per hour per 5 crew at dock, 75% longer at anchor, 150% at beach
+      const totalCrew = (state.currentCrew || []).reduce((s, g) => s + (g.count || 0), 0);
+      const loadsPerHour = Math.max(1, Math.floor(totalCrew / 5));
+      const cargoLoads = state.currentCargo?.loads || 0;
+      const cargoCapacity = state.ship?.cargoCapacity || 30;
+      const totalLoadsToHandle = cargoLoads + cargoCapacity; // unload + load
+      let loadingHours = Math.ceil(totalLoadsToHandle / loadsPerHour);
+      // Moorage type penalty — will be determined after fees
+      let loadingDays = 0; // calculated below after moorage decision
+
       // 3. Calculate and pay Port Fees
       const portFees = await this.calculatePortFees(state, port, daysInPort);
       portActivity.fees = portFees;
@@ -751,9 +1259,17 @@ export class VoyageSimulator {
       this.recordLedgerEntry(state, this.getCurrentDate(), `Port fees at ${portName}`, 0, portFees.total);
       if (state.breakdown) state.breakdown.fees += portFees.total;
       
-      state.voyageLogHtml.value += `<h3>Arrived at ${portName}</h3>`;
       state.voyageLogHtml.value += `<p><strong>Port Fees:</strong> ${portFees.total} gp (Entrance: ${portFees.entrance} gp, Moorage: ${portFees.moorage.cost} gp [${portFees.moorage.type}], Pilot: ${portFees.pilot} gp)</p>`;
-      
+
+      // Apply loading time based on moorage type
+      if (portFees.moorage.type === "anchor") loadingHours = Math.ceil(loadingHours * 1.75);
+      // beach not currently a moorage type but future-proof
+      loadingDays = Math.ceil(loadingHours / 10); // ~10 working hours per day
+      if (loadingDays > 0) {
+          daysInPort = Math.max(daysInPort, loadingDays);
+          state.voyageLogHtml.value += `<p><strong>Cargo handling:</strong> ~${loadingHours} hours (${loadingDays} days) at ${portFees.moorage.type}.</p>`;
+      }
+
       // Ship Repairs
       await this.offerShipRepairs(state, port, portActivity);
       
@@ -763,6 +1279,7 @@ export class VoyageSimulator {
       // 4. Simulate Days in Port (Weather & Costs)
       for (let i = 0; i < daysInPort; i++) {
           this.advanceDay();
+          state.maintenance.daysSinceService = (state.maintenance.daysSinceService || 0) + 1;
           if (state.dailyOperationalCost) {
               state.expenseTotal += state.dailyOperationalCost;
               state.treasury -= state.dailyOperationalCost;
@@ -776,8 +1293,6 @@ export class VoyageSimulator {
               }
           }
 
-          // Restore Weather System Logic
-          // Note: Assumes weather.js is in the same folder
           const { WeatherSystem } = await import('./weather.js');
           const weather = await WeatherSystem.generateDayWeather();
           const weatherLog = WeatherSystem.formatPortWeatherLog(this.getCurrentDate(), weather, portName);
@@ -785,15 +1300,12 @@ export class VoyageSimulator {
       }
       
       // 5. Handle Passengers
-      // Calculate remaining distance on the route
       let distanceRemaining = 0;
       for (let k = legIndex + 1; k < allLegs.length; k++) {
           distanceRemaining += allLegs[k].distance;
       }
 
       if (distanceRemaining > 0) {
-          // FIX: Use local import path. 
-          // Ensure passengers.js is in scripts/voyage/ alongside simulation.js
           const { PassengerBooking } = await import('./passengers.js');
           
           const passResult = await PassengerBooking.handlePassengerBooking({
@@ -814,13 +1326,31 @@ export class VoyageSimulator {
           }
       }
 
+      // 5b. Merchant Timing — week-based merchant availability
+      const weeksInPort = Math.max(1, Math.floor(daysInPort / 7));
+      const merchantTotal = MerchantTimingSystem.rollTotalMerchants(port.size, state.captain.chaScore);
+      const merchantsAvailable = MerchantTimingSystem.getCumulativeMerchants(merchantTotal.total, weeksInPort);
+      state.voyageLogHtml.value += `<p><strong>Merchants (${portName}):</strong> ${merchantsAvailable} of ${merchantTotal.total} available (${weeksInPort} week${weeksInPort > 1 ? 's' : ''} in port).</p>`;
+
+      // 5c. Transport for Hire — roll for shipping jobs
+      try {
+          const { TransportHireSystem } = await import('../trading/transport-hire.js');
+          const job = await TransportHireSystem.rollForJob(true);
+          if (job && job.available) {
+              const fee = TransportHireSystem.calculateFee(job.loads, distanceRemaining > 0 ? distanceRemaining : 500);
+              state.voyageLogHtml.value += `<p><strong>📋 Shipping job available:</strong> ${job.loads} loads of ${job.cargoName}, max ${job.maxDistance} miles, fee ${fee} gp.</p>`;
+              portActivity.activities.push(`Transport job offered: ${job.loads} loads ${job.cargoName} for ${fee} gp`);
+          }
+      } catch (e) {
+          // TransportHireSystem may require game settings; silently skip
+      }
+
       state.portActivities.push(portActivity);
       
       // 6. Handle Cargo Trading with Strategy
       const isFinalPort = legIndex === allLegs.length - 1;
       const remainingLegs = allLegs.slice(legIndex + 1);
       
-      // Calculate cumulative distance traveled with current cargo
       let cargoDistanceTraveled = 0;
       if (state.currentCargo.loads > 0 && state.currentCargo.purchaseLegIndex !== undefined) {
           for (let k = state.currentCargo.purchaseLegIndex; k <= legIndex; k++) {
@@ -1191,7 +1721,19 @@ export class VoyageSimulator {
     }
 }
 
+  /** Get CTT API if available */
+  _getCTT() {
+      return game.modules?.get('calendar-time-tracker')?.api ?? null;
+  }
+
   getCurrentDate() {
+      // Priority 1: CTT module
+      const ctt = this._getCTT();
+      if (ctt) {
+          const d = ctt.getCurrentDate();
+          return d.fullDateTime || d.formatted || `${d.year}-${d.month}-${d.day}`;
+      }
+      // Priority 2: Weather module calendar
       if (globalThis.dndWeather?.weatherSystem?.calendarTracker) {
           return globalThis.dndWeather.weatherSystem.calendarTracker.getDateString();
       }
@@ -1202,9 +1744,25 @@ export class VoyageSimulator {
   }
 
   advanceDay() {
+      // Priority 1: CTT module
+      const ctt = this._getCTT();
+      if (ctt) {
+          ctt.advanceTime(1, "day");
+          return;
+      }
+      // Priority 2: Weather module calendar
       if (globalThis.dndWeather?.weatherSystem?.calendarTracker) {
           globalThis.dndWeather.weatherSystem.calendarTracker.advanceDay();
       }
+  }
+
+  advanceHours(hours) {
+      const ctt = this._getCTT();
+      if (ctt) {
+          ctt.advanceTime(hours, "hour");
+          return;
+      }
+      // Weather module has no hour-level advance; skip
   }
 
   async handleVoyageFailure(state) {
@@ -1284,7 +1842,15 @@ export class VoyageSimulator {
 
     const weather = await this._getOrRollWeatherForDay(state);
 
-    const baseMiles = (state.ship?.movement ?? 6) * (this.MILES_PER_INCH_DAILY ?? 24); 
+    const SAILING_HOURS = 10;
+    let baseMiles;
+    if (state.ship?.dailySail) {
+        baseMiles = state.ship.dailySail;
+    } else if (state.ship?.normalSail) {
+        baseMiles = state.ship.normalSail * SAILING_HOURS;
+    } else {
+        baseMiles = (state.ship?.movement ?? 6) * (this.MILES_PER_INCH_DAILY ?? 24);
+    } 
     const hullMax  = state.ship?.hullPoints?.max ?? 0;
     const hullVal  = state.ship?.hullPoints?.value ?? hullMax;
     const hullLost = Math.max(0, hullMax - hullVal);
@@ -1328,6 +1894,32 @@ export class VoyageSimulator {
     await this._applyDayDecisions(state, decisions, arrived);
 
     state.maintenance.daysSinceService = (state.maintenance.daysSinceService ?? 0) + 1;
+
+    // Process daily scurvy/morale/maintenance for manual mode
+    const dateStr = this.getCurrentDate?.() || "Unknown";
+    this._processScurvy(state, dateStr);
+    this._processMorale(state, dateStr);
+    this._evaluateMaintenance(state, dateStr);
+
+    // Wind damage for manual mode
+    const windDmgResults = await this._processWindDamage(state, weather, dateStr);
+    for (const wd of windDmgResults) {
+      if (wd.sank) hazards.push({ ...wd, deadInWater: true });
+    }
+
+    // Navigation check for manual mode (openWater only)
+    if (!navCheck) {
+        const segWaterType = state.currentSegmentWaterType || "coastal";
+        if (segWaterType === "openWater" && milesToday > 0) {
+            const moralePen = state.morale?.proficiencyPenalty || 0;
+            navCheck = await this._rollNavigationCheck(state, weather, moralePen);
+            if (navCheck?.failed) {
+                const lost = Math.max(0, Math.floor(milesToday * navCheck.lostPercent / 100));
+                milesToday = Math.max(0, milesToday - lost);
+                navCheck.milesLost = lost;
+            }
+        }
+    }
 
     const result = {
       day: state.day + 1,

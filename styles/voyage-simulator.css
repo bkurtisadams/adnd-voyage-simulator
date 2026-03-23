@@ -202,6 +202,206 @@
 }
 
 /* ============================================================================
+   Crew Roster
+   ============================================================================ */
+
+.crew-roster-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.crew-roster-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.crew-roster-actions select {
+  padding: 4px 8px;
+  border: 1px solid #999;
+  border-radius: 3px;
+  min-width: 120px;
+}
+
+.add-officer-btn {
+  background: #28a745;
+  color: white;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+.add-officer-btn:hover { background: #218838; }
+
+.crew-roster-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.officer-card {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+.officer-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  min-height: 32px;
+}
+
+.officer-role-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: white;
+  min-width: 70px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.role-captain     { background: #8b0000; }
+.role-lieutenant  { background: #2B5797; }
+.role-mate        { background: #5b7a3a; }
+.role-navigator   { background: #6f42c1; }
+.role-artillerist { background: #d35400; }
+.role-surgeon     { background: #0d6efd; }
+
+.officer-name-input {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 2px 4px;
+  font-weight: bold;
+  flex: 1;
+  min-width: 100px;
+}
+.officer-name-input:hover,
+.officer-name-input:focus {
+  border-color: #999;
+  background: white;
+}
+
+.officer-level-display {
+  font-size: 11px;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.officer-skills-preview {
+  display: flex;
+  gap: 3px;
+  flex-wrap: nowrap;
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.skill-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  background: #d4edda;
+  border: 1px solid #b8d9c5;
+  border-radius: 2px;
+  font-size: 10px;
+  color: #333;
+  white-space: nowrap;
+}
+
+.officer-btn {
+  background: #e8e8e8;
+  border: 1px solid #ccc;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 3px;
+  color: #333;
+  flex-shrink: 0;
+  font-size: 12px;
+  min-width: 28px;
+  text-align: center;
+}
+.officer-btn:hover { background: #d0d0d0; border-color: #999; }
+.officer-delete:hover { color: #dc3545; background: #f8d7da; }
+
+.officer-detail {
+  padding: 8px 12px 12px;
+  border-top: 1px solid #ddd;
+  background: #f5f5f5;
+}
+
+.officer-detail-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.officer-detail-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: bold;
+  font-size: 11px;
+}
+.officer-detail-row input[type="number"] {
+  width: 50px;
+  padding: 2px 4px;
+}
+.officer-detail-row select {
+  padding: 2px 4px;
+}
+
+.officer-abilities {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px 8px;
+  margin-bottom: 8px;
+}
+.officer-abilities label {
+  font-size: 10px;
+  font-weight: bold;
+  color: #666;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.officer-abilities input {
+  width: 40px;
+  text-align: center;
+  padding: 2px;
+  border: 1px solid #bbb;
+  border-radius: 2px;
+}
+
+.officer-skills {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px 8px;
+}
+.skill-check {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.skill-check input[type="checkbox"] {
+  margin: 0;
+}
+
+.no-officers {
+  text-align: center;
+  padding: 20px;
+  color: #999;
+}
+
+/* ============================================================================
    Responsive Design
    ============================================================================ */
 
@@ -218,4 +418,192 @@
         border: 1px solid #999;
         margin-bottom: 4px;
     }
+}
+
+/* ============================================================================
+   Boarding Combat Chat Card
+   ============================================================================ */
+
+.boarding-combat-card {
+    border: 2px solid #8b0000;
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.boarding-header {
+    background: #8b0000;
+    color: #fff;
+    padding: 8px 12px;
+}
+
+.boarding-header h3 {
+    margin: 0 0 2px 0;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+}
+
+.boarding-header p {
+    margin: 0;
+    opacity: 0.9;
+}
+
+.boarding-forces {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid #ccc;
+}
+
+.boarding-side {
+    flex: 1;
+    padding: 8px 10px;
+}
+
+.boarding-side h4 {
+    margin: 0 0 4px 0;
+    font-size: 12px;
+}
+
+.boarding-side p {
+    margin: 2px 0;
+}
+
+.boarding-defenders {
+    background: #e8f4e8;
+    border-right: 1px solid #ccc;
+}
+
+.boarding-attackers {
+    background: #f4e8e8;
+}
+
+.boarding-pc-encounter {
+    padding: 8px 12px;
+    background: #fff8e8;
+    border-bottom: 1px solid #ccc;
+}
+
+.boarding-pc-encounter h4 {
+    margin: 0 0 4px 0;
+    font-size: 12px;
+    color: #8b4513;
+}
+
+.boarding-pc-encounter p {
+    margin: 3px 0;
+}
+
+.boarding-pc-status {
+    color: #666;
+    font-size: 11px;
+}
+
+.boarding-pc-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.boarding-btn {
+    flex: 1 1 auto;
+    min-width: 100px;
+    padding: 4px 8px;
+    border: 1px solid #8b4513;
+    border-radius: 3px;
+    background: #f5f0e8;
+    color: #333;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: bold;
+    text-align: center;
+}
+
+.boarding-btn:hover {
+    background: #e8dcc8;
+}
+
+.boarding-btn-leader-killed {
+    border-color: #8b0000;
+    color: #8b0000;
+}
+
+.boarding-btn-leader-killed:hover {
+    background: #f0d0d0;
+}
+
+.boarding-btn-pcs-won {
+    border-color: #2e7d32;
+    color: #2e7d32;
+}
+
+.boarding-btn-pcs-won:hover {
+    background: #d0f0d0;
+}
+
+.boarding-btn-pcs-fell-back {
+    border-color: #e65100;
+    color: #e65100;
+}
+
+.boarding-btn-pcs-fell-back:hover {
+    background: #f0e0d0;
+}
+
+.boarding-btn-skip {
+    border-color: #666;
+    color: #666;
+}
+
+.boarding-rounds {
+    padding: 8px 12px;
+    background: #f9f6f0;
+    border-bottom: 1px solid #ccc;
+}
+
+.boarding-rounds h4 {
+    margin: 0 0 4px 0;
+    font-size: 12px;
+}
+
+.boarding-rounds-status {
+    color: #888;
+    font-size: 11px;
+}
+
+.boarding-round {
+    margin: 2px 0;
+    font-size: 11px;
+    font-family: monospace;
+}
+
+.boarding-win {
+    color: #2e7d32;
+    font-weight: bold;
+}
+
+.boarding-loss {
+    color: #8b0000;
+    font-weight: bold;
+}
+
+.boarding-tie {
+    color: #e65100;
+    font-weight: bold;
+}
+
+.boarding-result {
+    padding: 8px 12px;
+    background: #faf8f2;
+}
+
+.boarding-result h4 {
+    margin: 0 0 4px 0;
+    font-size: 12px;
+    color: #8b4513;
+}
+
+.boarding-result p {
+    margin: 3px 0;
 }

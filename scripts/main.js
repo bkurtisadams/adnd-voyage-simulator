@@ -51,8 +51,11 @@ class ADnDVoyageSimulator {
             cargo: CargoRegistry,
             encounters: EncounterRegistry,
             openDialog: () => new VoyageSetupDialog().render(true),
-            editShip: () => new ShipEditorDialog().render(true)  // <-- ADD THIS LINE
+            editShip: () => new ShipEditorDialog().render(true)
         };
+        
+        // Register scene controls early (before getSceneControlButtons fires)
+        this.addSceneControl();
         
         console.log(`${this.TITLE} | Initialization complete`);
     }
@@ -173,60 +176,85 @@ class ADnDVoyageSimulator {
     static ready() {
         console.log(`${this.TITLE} | Ready`);
         
-        // Check for ADND Weather dependency
-        if (!globalThis.dndWeather?.weatherSystem) {
-            console.warn(`${this.TITLE} | ADND Weather module not active - weather features will be limited`);
-        }
+        // CTT and weather checks deferred — these modules may init after us
+        // The simulation checks for CTT at runtime via _getCTT(), so this is just a log
+        setTimeout(() => {
+            const cttModule = game.modules.get('calendar-time-tracker');
+            if (cttModule?.api) {
+                console.log(`${this.TITLE} | CTT module detected - using for date/time tracking`);
+            } else {
+                console.warn(`${this.TITLE} | CTT module not active - date tracking will use weather module or be limited`);
+            }
 
-        if (game.user.isGM) {
-            this.addSceneControl();
-        }
+            if (!globalThis.dndWeather?.weatherSystem) {
+                console.warn(`${this.TITLE} | ADND Weather module not active - weather features will be limited`);
+            }
+        }, 500);
     }
 
     /**
-     * Add scene control button
+     * Add scene control buttons — registered at module scope (before ready)
+     * Matches CTT's proven v13 pattern
      */
     static addSceneControl() {
-        Hooks.on('getSceneControlButtons', (controls) => {
-  try {
-    // Normalize the top-level controls to an array (v13 = array, some modules patch to object)
-    const list = Array.isArray(controls)
-      ? controls
-      : Array.isArray(controls?.controls)
-        ? controls.controls
-        : Array.isArray(controls?.buttons)
-          ? controls.buttons
-          : Object.values(controls ?? {});
+        Hooks.on('getSceneControlButtons', (controlsData) => {
+            try {
+                if (!game.user?.isGM) return;
 
-    const token = list.find(c => c?.name === 'token');
-    if (!token) return;
+                let groupsArray;
+                if (Array.isArray(controlsData)) {
+                    groupsArray = controlsData;
+                } else if (controlsData && typeof controlsData === "object") {
+                    groupsArray = Object.values(controlsData);
+                } else {
+                    return;
+                }
 
-    // Normalize tools to an array (some modules convert to object keyed by name)
-    const toolsArr = Array.isArray(token.tools)
-      ? token.tools
-      : token.tools
-        ? Object.values(token.tools)
-        : [];
+                const tokenGroup = groupsArray.find(g => g.name === "tokens" || g.name === "token");
+                if (!tokenGroup) return;
 
-    // Only add once
-    if (!toolsArr.some(t => t?.name === 'voyage-simulator')) {
-      toolsArr.push({
-        name: 'voyage-simulator',
-        title: game.i18n?.localize?.('ADND_VOYAGE.Controls.OpenSimulator') ?? 'Open Voyage Simulator',
-        icon: 'fas fa-ship',
-        button: true,
-        visible: game.user?.isGM ?? true,
-        onClick: () => new VoyageSetupDialog().render(true)
-      });
-    }
+                if (!tokenGroup.tools) tokenGroup.tools = [];
 
-    // Write normalized array back
-    token.tools = toolsArr;
-  } catch (err) {
-    console.error('adnd-voyage-simulator | getSceneControlButtons failed', err, controls);
-  }
-});
+                const toolsArray = Array.isArray(tokenGroup.tools) ? tokenGroup.tools : Object.values(tokenGroup.tools);
+                const alreadyExists = toolsArray.some(t => t?.name === "voyage-simulator");
+                if (alreadyExists) return;
 
+                const voyageTool = {
+                    name: "voyage-simulator",
+                    title: "Voyage Simulator",
+                    icon: "fas fa-ship",
+                    visible: true,
+                    button: true,
+                    onChange: () => {
+                        console.log("Voyage Simulator | Button clicked");
+                        new VoyageSetupDialog().render({ force: true });
+                    }
+                };
+
+                const editorTool = {
+                    name: "ship-editor",
+                    title: "Ship Editor",
+                    icon: "fas fa-anchor",
+                    visible: true,
+                    button: true,
+                    onChange: () => {
+                        console.log("Ship Editor | Button clicked");
+                        new ShipEditorDialog().render({ force: true });
+                    }
+                };
+
+                if (Array.isArray(tokenGroup.tools)) {
+                    tokenGroup.tools.push(voyageTool);
+                    tokenGroup.tools.push(editorTool);
+                } else {
+                    tokenGroup.tools["voyage-simulator"] = voyageTool;
+                    tokenGroup.tools["ship-editor"] = editorTool;
+                }
+                console.log("Voyage Simulator | Scene control buttons added");
+            } catch (err) {
+                console.error('adnd-voyage-simulator | getSceneControlButtons failed', err);
+            }
+        });
     }
 
     /**
@@ -240,13 +268,41 @@ class ADnDVoyageSimulator {
     }
 
     /**
-     * Render chat log hook - add custom styling
+     * Render chat log hook - add custom styling and boarding combat buttons
      */
     static enhanceChatMessages() {
         Hooks.on('renderChatMessage', (message, html, data) => {
             // Add custom styling for voyage simulator messages
             if (message.speaker?.alias === 'Voyage Simulator') {
                 html.addClass('adnd-voyage-message');
+            }
+
+            // Wire up boarding combat buttons
+            const flags = message.flags?.['adnd-voyage-simulator'];
+            if (flags?.boardingAction && !flags?.resolved) {
+                const element = html[0] || html;
+                const $el = $(element);
+                $el.find('.boarding-btn').on('click', async (ev) => {
+                    ev.preventDefault();
+                    if (!game.user.isGM) {
+                        ui.notifications.warn("Only the GM can resolve boarding actions.");
+                        return;
+                    }
+                    const action = ev.currentTarget.dataset.action;
+                    if (!action) return;
+
+                    // Disable all buttons immediately
+                    $el.find('.boarding-btn').prop('disabled', true).css('opacity', 0.5);
+
+                    try {
+                        const { BoardingCombat } = await import('./voyage/boarding-combat.js');
+                        const result = await BoardingCombat.resolveBoardingFromCard(message.id, action);
+                        console.log(`Voyage Simulator | Boarding resolved:`, result);
+                    } catch (err) {
+                        console.error(`Voyage Simulator | Boarding resolution failed:`, err);
+                        ui.notifications.error("Boarding combat resolution failed. See console.");
+                    }
+                });
             }
         });
     }
@@ -405,6 +461,14 @@ Hooks.once('init', () => {
 
     Handlebars.registerHelper('not', function(value) {
         return !value;
+    });
+
+    Handlebars.registerHelper('lowercase', function(value) {
+        return (value || '').toLowerCase();
+    });
+
+    Handlebars.registerHelper('officerHasSkill', function(officer, skillKey) {
+        return officer?.skills?.[skillKey] === true;
     });
 });
 

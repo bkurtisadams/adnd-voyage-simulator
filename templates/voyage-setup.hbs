@@ -1,13 +1,12 @@
 <form id="voyage-setup-form">
   <nav class="tabs" data-group="voyageSetupTabs">
     <a class="item" data-tab="voyage-details">Voyage Details</a>
-    <a class="item" data-tab="captain-info">Captain</a>
-    <a class="item" data-tab="lieutenant-info">Lieutenant</a>
+    <a class="item" data-tab="crew-roster">Crew Roster</a>
   </nav>
 
   <section class="sheet-body">
     <!-- ============ VOYAGE DETAILS ============ -->
-    <div class="tab" data-tab="voyage-details">
+    <div class="tab" data-tab="voyage-details" data-group="voyageSetupTabs">
       
       <div class="form-group">
         <label for="mode">Simulation Mode:</label>
@@ -22,9 +21,23 @@
         <label for="shipID">Select Ship:</label>
         <select id="shipID" name="shipID" required>
           <option value="">-- Choose Ship --</option>
-          {{#each ships}}
-            <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>
-          {{/each}}
+          {{#if namedShips.length}}
+          <optgroup label="Your Ships">
+            {{#each namedShips}}
+              <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.name}} ({{this.shipType}})</option>
+            {{/each}}
+          </optgroup>
+          {{/if}}
+          <optgroup label="DMG Ships">
+            {{#each templatesDMG}}
+              <option value="tmpl:{{this.id}}">{{this.shipType}} — Hull {{this.hullFormula}}, {{this.cargoCapacity}} cargo, {{this.normalSail}} mph sail ({{this.cost}} gp)</option>
+            {{/each}}
+          </optgroup>
+          <optgroup label="Seafaring Ships">
+            {{#each templatesSeafaring}}
+              <option value="tmpl:{{this.id}}">{{this.shipType}} — Hull {{this.hullFormula}}, {{this.cargoCapacity}} cargo, {{this.dailySail}} mi/day ({{this.cost}} gp)</option>
+            {{/each}}
+          </optgroup>
         </select>
       </div>
 
@@ -81,11 +94,9 @@
       <div class="form-group">
         <label for="crewQuality">Crew Quality:</label>
         <select id="crewQuality" name="crewQuality">
-          <option value="Green"     {{selected saved.crewQuality "Green"}}>Green</option>
-          <option value="Average"   {{selected saved.crewQuality "Average"}}>Average</option>
-          <option value="Good"      {{selected saved.crewQuality "Good"}}>Good</option>
-          <option value="Veteran"   {{selected saved.crewQuality "Veteran"}}>Veteran</option>
-          <option value="Elite"     {{selected saved.crewQuality "Elite"}}>Elite</option>
+          {{#each crewQualities}}
+            <option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>
+          {{/each}}
         </select>
       </div>
 
@@ -97,12 +108,12 @@
       </div>
 
       <div class="form-group">
-        <label for="latitude">Latitude (°N):</label>
+        <label for="latitude">Latitude (N):</label>
         <input type="number" id="latitude" name="latitude" value="{{saved.latitude}}" step="0.1" required/>
       </div>
 
       <div class="form-group">
-        <label for="longitude">Longitude (°E):</label>
+        <label for="longitude">Longitude (E):</label>
         <input type="number" id="longitude" name="longitude" value="{{saved.longitude}}" step="0.1" required/>
       </div>
 
@@ -127,92 +138,91 @@
       </div>
     </div>
 
-    <!-- ============ CAPTAIN ============ -->
-    <div class="tab" data-tab="captain-info">
-      <div class="flexrow" style="align-items: center; justify-content: space-between; margin-bottom: 10px;">
-        <h2>Captain</h2>
-        <button type="button" class="randomize-crew dialog-button" data-type="captain">
-          <i class="fas fa-dice"></i> Randomize
-        </button>
+    <!-- ============ CREW ROSTER ============ -->
+    <div class="tab" data-tab="crew-roster" data-group="voyageSetupTabs">
+      <div class="crew-roster-header">
+        <h2 style="margin:0">Ship's Officers</h2>
+        <div class="crew-roster-actions">
+          <select id="addOfficerRole">
+            <option value="Captain">Captain</option>
+            <option value="Lieutenant">Lieutenant</option>
+            <option value="Mate">Mate</option>
+            <option value="Navigator">Navigator</option>
+            <option value="Artillerist">Artillerist</option>
+            <option value="Surgeon">Surgeon</option>
+          </select>
+          <button type="button" class="add-officer-btn" title="Add Officer">
+            <i class="fas fa-plus"></i> Add
+          </button>
+        </div>
       </div>
 
-      <div class="form-group">
-        <label for="captainName">Name</label>
-        <input type="text" id="captainName" name="captainName" value="{{captain.name}}" />
+      <p><em>Officers loaded: {{officers.length}}</em></p>
+
+      <div class="crew-roster-list" id="officerRoster">
+        {{#each officers}}
+        <div class="officer-card" data-index="{{@index}}">
+          <div class="officer-summary">
+            <span class="officer-role-badge role-{{this.roleLower}}">{{this.role}}</span>
+            <input type="text" class="officer-name-input" name="officer_{{@index}}_name" value="{{this.name}}" placeholder="Name" />
+            <span class="officer-level-display">Lv{{this.level}}</span>
+            <span class="officer-skills-preview">
+              {{#each this.skillTags}}<span class="skill-tag">{{this}}</span>{{/each}}
+            </span>
+            <button type="button" class="officer-btn officer-randomize" data-index="{{@index}}" title="Randomize">
+              <i class="fas fa-dice"></i>
+            </button>
+            <button type="button" class="officer-btn officer-expand" data-index="{{@index}}" title="Details">
+              <i class="fas fa-chevron-down"></i>
+            </button>
+            <button type="button" class="officer-btn officer-delete" data-index="{{@index}}" title="Remove">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+
+          <div class="officer-detail" data-detail="{{@index}}" style="display:{{#if this.expanded}}block{{else}}none{{/if}};">
+            <input type="hidden" name="officer_{{@index}}_role" value="{{this.role}}" />
+
+            <div class="officer-detail-row">
+              <label>Level <input type="number" name="officer_{{@index}}_level" value="{{this.level}}" min="0" max="20" /></label>
+            </div>
+
+            <div class="officer-abilities">
+              <label>STR <input type="number" name="officer_{{@index}}_str" value="{{this.str}}" min="3" max="18" /></label>
+              <label>DEX <input type="number" name="officer_{{@index}}_dex" value="{{this.dex}}" min="3" max="18" /></label>
+              <label>CON <input type="number" name="officer_{{@index}}_con" value="{{this.con}}" min="3" max="18" /></label>
+              <label>INT <input type="number" name="officer_{{@index}}_int" value="{{this.int}}" min="3" max="18" /></label>
+              <label>WIS <input type="number" name="officer_{{@index}}_wis" value="{{this.wis}}" min="3" max="18" /></label>
+              <label>CHA <input type="number" name="officer_{{@index}}_cha" value="{{this.cha}}" min="3" max="18" /></label>
+            </div>
+
+            <div class="officer-skills">
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_bargaining" {{#if this.skills.bargaining}}checked{{/if}} /> Bargaining</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_appraisal" {{#if this.skills.appraisal}}checked{{/if}} /> Appraisal</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_trade" {{#if this.skills.trade}}checked{{/if}} /> Trade</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_smuggling" {{#if this.skills.smuggling}}checked{{/if}} /> Smuggling</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_customsInspection" {{#if this.skills.customsInspection}}checked{{/if}} /> Customs Insp.</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_seamanship" {{#if this.skills.seamanship}}checked{{/if}} /> Seamanship</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_shipCarpentry" {{#if this.skills.shipCarpentry}}checked{{/if}} /> Ship Carpentry</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_navigation" {{#if this.skills.navigation}}checked{{/if}} /> Navigation</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_piloting" {{#if this.skills.piloting}}checked{{/if}} /> Piloting</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_seaLore" {{#if this.skills.seaLore}}checked{{/if}} /> Sea Lore</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_shipRowing" {{#if this.skills.shipRowing}}checked{{/if}} /> Ship Rowing</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_shipSailing" {{#if this.skills.shipSailing}}checked{{/if}} /> Ship Sailing</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_shipwright" {{#if this.skills.shipwright}}checked{{/if}} /> Shipwright</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_signaling" {{#if this.skills.signaling}}checked{{/if}} /> Signaling</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_vesselIdentification" {{#if this.skills.vesselIdentification}}checked{{/if}} /> Vessel ID</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_boating" {{#if this.skills.boating}}checked{{/if}} /> Boating</label>
+              <label class="skill-check"><input type="checkbox" name="officer_{{@index}}_skill_artillerist" {{#if this.skills.artillerist}}checked{{/if}} /> Artillerist</label>
+            </div>
+          </div>
+        </div>
+        {{/each}}
       </div>
 
-      <h3>Abilities</h3>
-      <div class="abilities-grid">
-        <label>STR <input type="number" id="str" name="str" value="{{saved.str}}" min="3" max="18" /></label>
-        <label>DEX <input type="number" id="dex" name="dex" value="{{saved.dex}}" min="3" max="18" /></label>
-        <label>CON <input type="number" id="con" name="con" value="{{saved.con}}" min="3" max="18" /></label>
-        <label>INT <input type="number" id="int" name="int" value="{{saved.int}}" min="3" max="18" /></label>
-        <label>WIS <input type="number" id="wis" name="wis" value="{{saved.wis}}" min="3" max="18" /></label>
-        <label>CHA <input type="number" id="cha" name="cha" value="{{saved.cha}}" min="3" max="18" /></label>
-      </div>
-
-      <h3>Skills</h3>
-      <div class="skills-grid">
-        <label><input type="checkbox" id="skillBargaining"          name="skillBargaining"          {{checked saved.skillBargaining}}>          Bargaining</label>
-        <label><input type="checkbox" id="skillAppraisal"           name="skillAppraisal"           {{checked saved.skillAppraisal}}>           Appraisal</label>
-        <label><input type="checkbox" id="skillTrade"               name="skillTrade"               {{checked saved.skillTrade}}>               Trade</label>
-        <label><input type="checkbox" id="skillSmuggling"           name="skillSmuggling"           {{checked saved.skillSmuggling}}>           Smuggling</label>
-        <label><input type="checkbox" id="skillCustomsInspection"   name="skillCustomsInspection"   {{checked saved.skillCustomsInspection}}>   Customs Inspection</label>
-        <label><input type="checkbox" id="skillSeamanship"          name="skillSeamanship"          {{checked saved.skillSeamanship}}>          Seamanship</label>
-        <label><input type="checkbox" id="skillShipCarpentry"       name="skillShipCarpentry"       {{checked saved.skillShipCarpentry}}>       Ship Carpentry</label>
-        <label><input type="checkbox" id="skillNavigation"          name="skillNavigation"          {{checked saved.skillNavigation}}>          Navigation</label>
-        <label><input type="checkbox" id="skillPiloting"            name="skillPiloting"            {{checked saved.skillPiloting}}>            Piloting</label>
-        <label><input type="checkbox" id="skillSeaLore"             name="skillSeaLore"             {{checked saved.skillSeaLore}}>             Sea Lore</label>
-        <label><input type="checkbox" id="skillShipRowing"          name="skillShipRowing"          {{checked saved.skillShipRowing}}>          Ship Rowing</label>
-        <label><input type="checkbox" id="skillShipSailing"         name="skillShipSailing"         {{checked saved.skillShipSailing}}>         Ship Sailing</label>
-        <label><input type="checkbox" id="skillShipwright"          name="skillShipwright"          {{checked saved.skillShipwright}}>          Shipwright</label>
-        <label><input type="checkbox" id="skillSignaling"           name="skillSignaling"           {{checked saved.skillSignaling}}>           Signaling</label>
-        <label><input type="checkbox" id="skillVesselIdentification" name="skillVesselIdentification" {{checked saved.skillVesselIdentification}}> Vessel Identification</label>
-      </div>
-    </div>
-
-    <!-- ============ LIEUTENANT ============ -->
-    <div class="tab" data-tab="lieutenant-info">
-      <div class="flexrow" style="align-items: center; justify-content: space-between; margin-bottom: 10px;">
-        <h2>Lieutenant</h2>
-        <button type="button" class="randomize-crew dialog-button" data-type="lieutenant">
-          <i class="fas fa-dice"></i> Randomize
-        </button>
-      </div>
-
-      <div class="form-group">
-        <label for="lieutenantName">Name</label>
-        <input type="text" id="lieutenantName" name="lieutenantName" value="{{lieutenant.name}}" />
-      </div>
-
-      <h3>Abilities</h3>
-      <div class="abilities-grid">
-        <label>STR <input type="number" id="ltStr" name="ltStr" value="{{saved.ltStr}}" min="3" max="18" /></label>
-        <label>DEX <input type="number" id="ltDex" name="ltDex" value="{{saved.ltDex}}" min="3" max="18" /></label>
-        <label>CON <input type="number" id="ltCon" name="ltCon" value="{{saved.ltCon}}" min="3" max="18" /></label>
-        <label>INT <input type="number" id="ltInt" name="ltInt" value="{{saved.ltInt}}" min="3" max="18" /></label>
-        <label>WIS <input type="number" id="ltWis" name="ltWis" value="{{saved.ltWis}}" min="3" max="18" /></label>
-        <label>CHA <input type="number" id="ltCha" name="ltCha" value="{{saved.ltCha}}" min="3" max="18" /></label>
-      </div>
-
-      <h3>Skills</h3>
-      <div class="skills-grid">
-        <label><input type="checkbox" id="ltSkillBargaining"          name="ltSkillBargaining"          {{checked saved.ltSkillBargaining}}>          Bargaining</label>
-        <label><input type="checkbox" id="ltSkillAppraisal"           name="ltSkillAppraisal"           {{checked saved.ltSkillAppraisal}}>           Appraisal</label>
-        <label><input type="checkbox" id="ltSkillTrade"               name="ltSkillTrade"               {{checked saved.ltSkillTrade}}>               Trade</label>
-        <label><input type="checkbox" id="ltSkillSmuggling"           name="ltSkillSmuggling"           {{checked saved.ltSkillSmuggling}}>           Smuggling</label>
-        <label><input type="checkbox" id="ltSkillCustomsInspection"   name="ltSkillCustomsInspection"   {{checked saved.ltSkillCustomsInspection}}>   Customs Inspection</label>
-        <label><input type="checkbox" id="ltSkillSeamanship"          name="ltSkillSeamanship"          {{checked saved.ltSkillSeamanship}}>          Seamanship</label>
-        <label><input type="checkbox" id="ltSkillShipCarpentry"       name="ltSkillShipCarpentry"       {{checked saved.ltSkillShipCarpentry}}>       Ship Carpentry</label>
-        <label><input type="checkbox" id="ltSkillNavigation"          name="ltSkillNavigation"          {{checked saved.ltSkillNavigation}}>          Navigation</label>
-        <label><input type="checkbox" id="ltSkillPiloting"            name="ltSkillPiloting"            {{checked saved.ltSkillPiloting}}>            Piloting</label>
-        <label><input type="checkbox" id="ltSkillSeaLore"             name="ltSkillSeaLore"             {{checked saved.ltSkillSeaLore}}>             Sea Lore</label>
-        <label><input type="checkbox" id="ltSkillShipRowing"          name="ltSkillShipRowing"          {{checked saved.ltSkillShipRowing}}>          Ship Rowing</label>
-        <label><input type="checkbox" id="ltSkillShipSailing"         name="ltSkillShipSailing"         {{checked saved.ltSkillShipSailing}}>         Ship Sailing</label>
-        <label><input type="checkbox" id="ltSkillShipwright"          name="ltSkillShipwright"          {{checked saved.ltSkillShipwright}}>          Shipwright</label>
-        <label><input type="checkbox" id="ltSkillSignaling"           name="ltSkillSignaling"           {{checked saved.ltSkillSignaling}}>           Signaling</label>
-        <label><input type="checkbox" id="ltSkillVesselIdentification" name="ltSkillVesselIdentification" {{checked saved.ltSkillVesselIdentification}}> Vessel Identification</label>
-      </div>
+      {{#unless officers}}
+      <p class="no-officers"><em>No officers assigned. Add a Captain to begin.</em></p>
+      {{/unless}}
     </div>
   </section>
 
